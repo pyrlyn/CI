@@ -25,7 +25,7 @@ Shared reusable GitHub workflows and build configs for pyrlyn repositories
 | [`bump.yml`](.github/workflows/bump.yml) | **the only release path**: version commit -> PR -> required checks -> rebase merge -> tag + Release on the landed commit -> dispatch the release build |
 | [`notify-release-failure.yml`](.github/workflows/notify-release-failure.yml) | `release-failure` issue (mention + assign) when a release fails |
 | [`revert-on-failure.yml`](.github/workflows/revert-on-failure.yml) | revert a failed push to the default branch |
-| [`cla.yml`](.github/workflows/cla.yml) | Contributor License Agreement check (CLA Assistant Lite); see [docs/cla.md](docs/cla.md) |
+| [`cla.yml`](.github/workflows/cla.yml) | Contributor License Agreement check (`pyrlyn/cla` action, off unless `CLA_ENABLED`); see [docs/cla.md](docs/cla.md) |
 
 Composite actions: [`gate`](.github/actions/gate/action.yml) (fail unless every needed job
 succeeded), [`revert-on-failure`](.github/actions/revert-on-failure/action.yml),
