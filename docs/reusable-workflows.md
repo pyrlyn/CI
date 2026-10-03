@@ -21,7 +21,7 @@ repository. All third-party actions are pinned to full commit SHAs.
 | `notify-release-failure.yml` | open or update a `release-failure` issue for a failed release |
 | `dependabot-automerge.yml` | merge allowed Dependabot updates after green CI; label/flag others |
 | `sonarcloud.yml` | SonarCloud scan (+ Rust LCOV coverage); skipped without `SONAR_TOKEN` |
-| `cla.yml` | Contributor License Agreement check (CLA Assistant Lite), [cla.md](cla.md) |
+| `cla.yml` | Contributor License Agreement check (`pyrlyn/cla` action, off unless `CLA_ENABLED`), [cla.md](cla.md) |
 
 Secrets (declared in each workflow's `on.workflow_call.secrets`):
 
@@ -38,7 +38,8 @@ Secrets (declared in each workflow's `on.workflow_call.secrets`):
   secrets, passed with `secrets: inherit`; a missing one stops the run before the build.
 - `sonarcloud.yml`: `SONAR_TOKEN` (optional; every step skips without it).
 - `dependabot-automerge.yml`: none (uses `github.token`).
-- `cla.yml`: `CLA_SIGNATURES_TOKEN` (contents read/write on `pyrlyn/cla-signatures`).
+- `cla.yml`: `CLA_APP_ID`, `CLA_APP_PRIVATE_KEY` (GitHub App `pyrlyn-cla`; or the fallback PAT
+  `CLA_SIGNATURES_TOKEN`), all optional.
 
 `permissions:` the calling job must grant:
 
@@ -56,8 +57,7 @@ Secrets (declared in each workflow's `on.workflow_call.secrets`):
 - `notify-release-failure.yml`: `actions: read`, `issues: write`.
 - `dependabot-automerge.yml`: `contents: write`, `pull-requests: write`, `actions: read`.
 - `sonarcloud.yml`: `contents: read`, `pull-requests: read`, `actions: write`.
-- `cla.yml`: `actions: write` (re-run after signing), `contents: read`,
-  `pull-requests: write`, `statuses: write`.
+- `cla.yml`: `contents: read`, `pull-requests: write`, `statuses: write`.
 
 `actions: write` is for cancel-on-failure: every job of every workflow above except
 `dependabot-automerge.yml` and `cla.yml` ends with the `cancel-run` action under `if: failure()`, so the first

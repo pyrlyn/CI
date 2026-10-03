@@ -1,24 +1,28 @@
 name: cla
 
-# Contributor License Agreement check with CLA Assistant Lite
-# (contributor-assistant/github-action). Every committer of a pull request must have signed
-# CLA.md of this repository, by commenting the sign phrase on a pull request, or be in the
-# allowlist. Signatures of all pyrlyn repositories are kept in one JSON file in a separate
-# repository (default pyrlyn/cla-signatures, branch main), so one signature covers every
-# repository. Setup, token and required-check instructions: docs/cla.md.
+# Contributor License Agreement check with the pyrlyn/cla action (https://github.com/pyrlyn/cla,
+# replaces the archived CLA Assistant Lite). A person is covered when they are a current member
+# of the pyrlyn organization (auto-pass, no signature), an allowlisted bot, or signed CLA.md by
+# commenting the sign phrase on a pull request. Signatures of all pyrlyn repositories are kept in
+# one JSON file in pyrlyn/cla-signatures (branch main, signatures/cla.json), so one signature
+# covers every repository. Setup, credentials and required-check instructions: docs/cla.md.
+#
+# The decision is the commit status `pyrlyn/cla` on the pull request head, not the job result: a
+# green job with a failing status means someone still has to sign; a red job means the action
+# itself broke. A comment run (signing, `recheck`) writes the status on the head commit itself,
+# so nothing is re-run.
 #
 # Reusable (`workflow_call`) from a thin `.github/workflows/cla.yml` in each calling repository,
 # triggered there on `pull_request_target` and `issue_comment`. Also runs directly on this
-# repository's own pull requests. The workflow never checks out pull request code, which is what
-# keeps `pull_request_target` (secrets available to fork pull requests) safe here.
+# repository's own pull requests. The workflow never checks out pull request code and puts no
+# event text into a `run:` script, which is what keeps `pull_request_target` safe here.
 #
-# On `issue_comment` (signing, `recheck`) the action re-runs the last failed
-# `pull_request_target` run of the calling workflow, found by workflow *name*: keep the
-# caller's `name: cla` unique in its repository.
-#
-# Secret: CLA_SIGNATURES_TOKEN, a token with contents: write on the signatures repository only.
-# Caller job permissions: actions: write (re-run), contents: read, pull-requests: write
-# (comment, lock), statuses: write.
+# Secrets (all optional, passed by name): CLA_APP_ID and CLA_APP_PRIVATE_KEY (GitHub App
+# `pyrlyn-cla`: Organization Members read, Contents read/write on pyrlyn/cla-signatures only), or
+# CLA_SIGNATURES_TOKEN (fine-grained PAT with the same access) as a fallback. The app wins when
+# both are set.
+# Caller job permissions: contents: read, pull-requests: write (comment, lock), statuses: write.
+# A caller that still grants actions: write keeps working (a caller may grant more).
 on:
   pull_request_target:
     types: [opened, synchronize, reopened, closed]
@@ -27,10 +31,32 @@ on:
   workflow_call:
     inputs:
       document-url:
-        description: URL of the agreement contributors sign.
+        description: >-
+          URL of the agreement contributors sign. Pin it to a commit and keep `document-sha256`
+          and `cla-version` in step with it.
         type: string
         required: false
-        default: https://github.com/pyrlyn/infra/blob/main/CLA.md
+        default: https://github.com/pyrlyn/infra/blob/f814709343352f44195aaf362ad67c827c435b44/CLA.md
+      document-url-ru:
+        description: URL of the Russian translation of the agreement.
+        type: string
+        required: false
+        default: https://github.com/pyrlyn/infra/blob/f814709343352f44195aaf362ad67c827c435b44/CLA.ru.md
+      document-sha256:
+        description: SHA-256 hex digest of the file at `document-url`, stored with each signature.
+        type: string
+        required: false
+        default: fc128adcbc7b2ef89da7a0067de8ef5bb55c996066bc314966fc5f3cc5d44e04
+      cla-version:
+        description: CLA version stored with a new signature.
+        type: string
+        required: false
+        default: '1.0'
+      minimum-version:
+        description: Oldest signature version that still covers a person.
+        type: string
+        required: false
+        default: '1.0'
       signatures-organization:
         description: Owner of the repository that stores the signatures.
         type: string
@@ -50,24 +76,32 @@ on:
         description: Path of the signatures JSON file in `signatures-repository`.
         type: string
         required: false
-        default: signatures/v1/cla.json
+        default: signatures/cla.json
       allowlist:
         description: >-
-          Comma-separated GitHub logins that never need to sign (bots, the copyright holder).
-          `*` is a wildcard.
+          Comma-separated bot logins that never need to sign. Every entry must end in `[bot]`
+          (a `*` wildcard is allowed there). Organization members pass without being listed.
         type: string
         required: false
-        default: dependabot[bot],github-actions[bot],renovate[bot],listepo
+        default: dependabot[bot],github-actions[bot],renovate[bot]
       lock-after-merge:
         description: >-
           Lock the conversation of a merged pull request so signature comments cannot be edited
-          or deleted afterwards.
+          or deleted afterwards (unlocked again if reopened).
         type: boolean
         required: false
         default: true
     secrets:
+      CLA_APP_ID:
+        description: ID of the `pyrlyn-cla` GitHub App (membership and signatures).
+        required: false
+      CLA_APP_PRIVATE_KEY:
+        description: Private key of the `pyrlyn-cla` GitHub App.
+        required: false
       CLA_SIGNATURES_TOKEN:
-        description: Token with contents read/write on the signatures repository.
+        description: >-
+          Fallback when the app is not set: fine-grained PAT with Contents read/write on the
+          signatures repository and Organization Members read.
         required: false
 
 permissions:
@@ -77,8 +111,8 @@ jobs:
   cla:
     name: cla
     # Pull request events, or a comment on a pull request (not an issue) that signs or asks for a
-    # recheck (`contains` is case-insensitive). Dependabot runs get no Actions secrets, and its
-    # commits are in the allowlist anyway, so its pull requests skip the check (a skipped required
+    # recheck (`contains` is case-insensitive). Dependabot runs get no Actions secrets, and
+    # dependabot[bot] is allowlisted anyway, so its pull requests skip the check (a skipped
     # check counts as passed).
     # Off switch: the check runs only when the repository or organization variable
     # CLA_ENABLED is 'true'. Unset (the default) skips the job, and a skipped check passes.
@@ -91,42 +125,58 @@ jobs:
       || contains(github.event.comment.body, 'I hereby sign the CLA'))))
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # One run per pull request at a time; never cancel a run that may be writing a signature.
+    concurrency:
+      group: cla-${{ github.repository }}-${{ github.event.pull_request.number || github.event.issue.number }}
+      cancel-in-progress: false
     permissions:
-      actions: write
       contents: read
       pull-requests: write
       statuses: write
+    env:
+      # `secrets` cannot be used in a step `if`; expose only whether the app is configured.
+      HAS_CLA_APP: ${{ secrets.CLA_APP_ID != '' && secrets.CLA_APP_PRIVATE_KEY != '' }}
     steps:
-      - name: CLA Assistant Lite
-        uses: contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08 # v2.6.1
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          PERSONAL_ACCESS_TOKEN: ${{ secrets.CLA_SIGNATURES_TOKEN }}
+      - name: GitHub App token
+        id: app
+        if: env.HAS_CLA_APP == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
+          app-id: ${{ secrets.CLA_APP_ID }}
+          private-key: ${{ secrets.CLA_APP_PRIVATE_KEY }}
+          owner: ${{ inputs.signatures-organization || 'pyrlyn' }}
+          repositories: ${{ inputs.signatures-repository || 'cla-signatures' }}
+          permission-members: read
+          permission-contents: write
+      - name: pyrlyn CLA
+        uses: pyrlyn/cla@bc13d019657f92db6d3937855a7ac0bb123174ac # v1.0.0
+        with:
+          github-token: ${{ github.token }}
+          # Without the app or the PAT, membership falls back to public membership and the
+          # signatures repository cannot be written; the status then explains the error.
+          cla-token: ${{ steps.app.outputs.token || secrets.CLA_SIGNATURES_TOKEN }}
+          # Members of the organization pass without a signature.
+          org: pyrlyn
+          members-pass: 'true'
           # On a direct run (this repository's own events) `inputs` is empty: use the defaults.
-          path-to-document: >-
-            ${{ inputs.document-url || 'https://github.com/pyrlyn/infra/blob/main/CLA.md' }}
-          remote-organization-name: ${{ inputs.signatures-organization || 'pyrlyn' }}
-          remote-repository-name: ${{ inputs.signatures-repository || 'cla-signatures' }}
-          branch: ${{ inputs.signatures-branch || 'main' }}
-          path-to-signatures: ${{ inputs.signatures-path || 'signatures/v1/cla.json' }}
           allowlist: >-
-            ${{ inputs.allowlist
-            || 'dependabot[bot],github-actions[bot],renovate[bot],listepo' }}
+            ${{ inputs.allowlist || 'dependabot[bot],github-actions[bot],renovate[bot]' }}
+          signatures-repository: >-
+            ${{ inputs.signatures-organization || 'pyrlyn' }}/${{
+            inputs.signatures-repository || 'cla-signatures' }}
+          signatures-branch: ${{ inputs.signatures-branch || 'main' }}
+          signatures-path: ${{ inputs.signatures-path || 'signatures/cla.json' }}
+          document-url: >-
+            ${{ inputs.document-url
+            || 'https://github.com/pyrlyn/infra/blob/f814709343352f44195aaf362ad67c827c435b44/CLA.md' }}
+          document-url-ru: >-
+            ${{ inputs.document-url-ru
+            || 'https://github.com/pyrlyn/infra/blob/f814709343352f44195aaf362ad67c827c435b44/CLA.ru.md' }}
+          document-sha256: >-
+            ${{ inputs.document-sha256
+            || 'fc128adcbc7b2ef89da7a0067de8ef5bb55c996066bc314966fc5f3cc5d44e04' }}
+          cla-version: ${{ inputs.cla-version || '1.0' }}
+          minimum-version: ${{ inputs.minimum-version || '1.0' }}
           # format(): on a direct run the input is null, and null == false is true in expressions.
-          lock-pullrequest-aftermerge: >-
+          lock-after-merge: >-
             ${{ format('{0}', inputs.lock-after-merge) == 'false' && 'false' || 'true' }}
-          create-file-commit-message: 'chore(cla): create the signatures file'
-          signed-commit-message: >-
-            chore(cla): $contributorName signed the CLA in
-            $owner/$repo#${{ github.event.pull_request.number || github.event.issue.number }}
-          custom-notsigned-prcomment: >-
-            Thank you for your contribution! Before it can be merged, every committer of this pull
-            request needs to sign our [Contributor License Agreement](${{ inputs.document-url
-            || 'https://github.com/pyrlyn/infra/blob/main/CLA.md' }})
-            ([Russian translation](https://github.com/pyrlyn/infra/blob/main/CLA.ru.md); the
-            English text prevails). You keep the copyright in your work; the agreement lets the
-            maintainer offer the project under the GPL and under its royalty-free and commercial
-            licenses. To sign, post the comment below on this pull request. One signature covers
-            all pyrlyn repositories.
-          custom-allsigned-prcomment: All committers have signed the CLA.
