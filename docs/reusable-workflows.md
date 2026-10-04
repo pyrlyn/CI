@@ -182,6 +182,7 @@ every job fails if `rustc --version` is not the pinned version.
 | `msrv` | `""` | e.g. `1.85`; adds an `msrv` job |
 | `msrv-command` | `cargo check $PACKAGE_ARGS --all-targets $FEATURE_ARGS` | |
 | `changed-only` | `false` | no work (jobs still pass under their names) when no Rust file changed |
+| `skip` | `false` | no work (jobs still pass under their names) whatever changed, e.g. docs-only |
 | `full-package-args` | `--workspace` | replaces `package-args` when a Cargo.toml/Cargo.lock changed |
 | `fmt-runs-on`, `mise-install-args`, `cache-all-refs`, `timeout-minutes` | | |
 
