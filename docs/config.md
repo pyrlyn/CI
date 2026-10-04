@@ -53,9 +53,15 @@ version: 1                      # required
 cancel-run-on-failure: true     # cancel the run when a job fails (input "false" overrides)
 skip-drafts: true               # draft PRs run nothing
 upload-sarif: auto              # true | false | auto (= public repositories)
+docs-only:                      # skip heavy checks on documentation-only changes (below)
+  enabled: false
+  events: [pull_request, merge_group]
+  paths: []                     # extended regexes of more documentation files
+  exclude: []                   # extended regexes of Markdown that is code
 
 # Each check: enabled (true | false | auto = public repos only), events (list of
-# github.event_name; [] = all) + the inputs of the matching reusable workflow.
+# github.event_name; [] = all), docs-only (runs on a docs-only change; false except lint)
+# + the inputs of the matching reusable workflow.
 rust:       {enabled: false, events: [], matrix: [], rust-version: "", fmt-runs-on: ubuntu-latest,
              working-directory: ".", mise-install-args: rust, clippy-args: "", tools: "",
              setup-command: "", test-command: "...", doc-tests: true, build-command: "...",
@@ -91,6 +97,7 @@ jobs:                           # repository-specific jobs -> `ci / <name>`
     timeout-minutes: 60
     fetch-depth: 1
     allow-failure: false
+    docs-only: false            # true = also runs on a docs-only change (e.g. a docs linter)
 ```
 
 Unknown keys fail the `config` job (typos never silently disable a check).
@@ -101,3 +108,42 @@ has a .NET project, then runs the full `dotnet test` (ci-dotnet.yml). `rust.chan
 ecosystem; a dependency manifest or lock change always runs the full suite (see
 "Dependency-driven suite selection" in docs/reusable-workflows.md).
 Example: tests/fixtures/infra.yml (self-test), docs/migration/*/infra.yml.
+
+### Docs-only changes
+
+`docs-only.enabled: true` makes a pull request (or merge group; `docs-only.events`) that
+changes documentation only skip every check and custom job whose own `docs-only` is false:
+Rust, .NET, CodeQL, Semgrep, Snyk and SonarCloud by default, while lint and custom jobs with
+`docs-only: true` still run. The skipped jobs go to `skip-ok`, so `gate` (and a required
+`ci / gate` or a caller's `gate`) reports success instead of leaving a required check
+pending, which a workflow-level `paths-ignore` would do.
+
+Detection is the `changes` action (`docs_only` output; docs/reusable-workflows.md): the
+pull request's three-dot diff, i.e. `git diff --name-only BASE...HEAD`, from the compare API.
+It is docs-only when there is a diff, nothing forced the run, and every changed path (both
+sides of a rename) matches `\.md$` (any case, any directory, e.g. `docs/uk/*.md`) or a
+`paths` regex, and none matches an `exclude` regex. It fails open: no diff (schedule,
+dispatch), a `.github/`, `mise.toml` or `.tool-versions` change, 300+ files or an API error
+mean not docs-only, so everything runs. Pushes to main are not in the default `events`.
+
+List in `exclude` every Markdown file that is code: embedded in a binary (`include_str!`),
+shipped in a package (plugin or skill files, a crate README), executed or asserted on by a
+test the skipped checks would run, or read by a release (CHANGELOG). A docs-only change to
+Markdown that a test validates still needs that test: give the repository a cheap custom job
+(or local job) with `docs-only: true` that runs it.
+
+The config action exposes the verdict as its `docs-only` output (and ci.yml as the `docs-only`
+workflow output), so a caller with local jobs can run the action itself and skip them too:
+
+```yaml
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      docs-only: ${{ steps.config.outputs.docs-only }}
+    steps:
+      - id: config
+        uses: pyrlyn/infra/.github/actions/config@<sha> # main
+  heavy:
+    needs: changes
+    if: needs.changes.outputs.docs-only != 'true'
+```

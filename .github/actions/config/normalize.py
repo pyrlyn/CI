@@ -1,6 +1,7 @@
 """Normalize the merged ci.yml configuration (JSON on stdin) into what ci.yml's jobs read.
 
-Writes `json`, `jobs`, `skip-ok` and `draft-skip` to $GITHUB_OUTPUT and a summary to $GITHUB_STEP_SUMMARY.
+Writes `json`, `jobs`, `skip-ok`, `draft-skip` and `docs-only` to $GITHUB_OUTPUT and a summary
+to $GITHUB_STEP_SUMMARY.
 Pure standard library: runs on any GitHub-hosted runner's python3.
 """
 import json
@@ -25,7 +26,9 @@ JOB_DEFAULTS = {
     "timeout-minutes": 60,
     "fetch-depth": 1,
     "allow-failure": False,
+    "docs-only": False,
 }
+DOCS_ONLY_KEYS = {"enabled", "events", "paths", "exclude"}
 KNOWN_JOB_KEYS = set(JOB_DEFAULTS) | {"name", "run"}
 
 
@@ -56,15 +59,33 @@ def main():
     event = os.environ.get("EVENT", "")
     draft = os.environ.get("DRAFT") == "true"
     cancel_override = os.environ.get("CANCEL_OVERRIDE", "")
+    # The `changes` action's docs_only, computed by action.yml only when docs-only applies.
+    docs_detected = os.environ.get("DOCS_ONLY") == "true"
 
     if cfg.get("version") != 1:
         fail(f"version must be 1, got {cfg.get('version')!r}")
     unknown = set(cfg) - set(CHECKS) - {"version", "cancel-run-on-failure", "skip-drafts",
-                                          "upload-sarif", "jobs"}
+                                          "upload-sarif", "jobs", "docs-only"}
     if unknown:
         fail(f"unknown top-level keys: {sorted(unknown)}")
 
     skip_all = bool(cfg.get("skip-drafts", True)) and draft
+
+    docs = cfg.get("docs-only") or {}
+    if not isinstance(docs, dict):
+        fail("docs-only must be a map")
+    extra = set(docs) - DOCS_ONLY_KEYS
+    if extra:
+        fail(f"docs-only: unknown keys {sorted(extra)}")
+    if not isinstance(docs.get("enabled", False), bool):
+        fail("docs-only.enabled must be true or false")
+    for key in ("paths", "exclude"):
+        if not isinstance(docs.get(key) or [], list):
+            fail(f"docs-only.{key} must be a list of regexes")
+    docs_only = (docs.get("enabled", False) and event_ok(docs.get("events"), event, "docs-only")
+                 and docs_detected and not skip_all)
+    docs["active"] = docs_only
+    cfg["docs-only"] = docs
     cfg["upload-sarif"] = as_bool(cfg.get("upload-sarif", "auto"), private, "upload-sarif")
     if cancel_override in ("true", "false"):
         cfg["cancel-run-on-failure"] = cancel_override == "true"
@@ -73,7 +94,8 @@ def main():
     for name in CHECKS:
         c = cfg.get(name) or {}
         run = (as_bool(c.get("enabled", False), private, f"{name}.enabled")
-               and event_ok(c.get("events"), event, name) and not skip_all)
+               and event_ok(c.get("events"), event, name) and not skip_all
+               and not (docs_only and not c.get("docs-only", False)))
         c["run"] = run
         if not run:
             skip_ok.append(name)
@@ -94,6 +116,8 @@ def main():
             fail(f"{where} ({raw['name']}): unknown keys {sorted(extra)}")
         job = {**JOB_DEFAULTS, **raw}
         if not job["enabled"] or skip_all or not event_ok(job["events"], event, where):
+            continue
+        if docs_only and not job["docs-only"]:
             continue
         if job["shell"] not in ("bash", "pwsh"):
             fail(f"{where}: shell must be bash or pwsh")
@@ -139,6 +163,7 @@ def main():
         fh.write(f"jobs={json.dumps(jobs, separators=(',', ':'))}\n")
         fh.write(f"skip-ok={' '.join(skip_ok)}\n")
         fh.write(f"draft-skip={'true' if skip_all else 'false'}\n")
+        fh.write(f"docs-only={'true' if docs_only else 'false'}\n")
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with open(summary, "a", encoding="utf-8") as fh:
@@ -146,6 +171,8 @@ def main():
             for name in CHECKS:
                 fh.write(f"| {name} | {cfg[name]['run']} |\n")
             fh.write(f"| custom jobs | {len(jobs)} |\n")
+            if docs_only:
+                fh.write("\nDocs-only change: checks without `docs-only: true` are skipped.\n")
 
 
 if __name__ == "__main__":

@@ -9,6 +9,8 @@ name: ci
 # workflow's `uses:` cannot be dynamic, so every possible job is listed here and switched off
 # by config). Repository-specific jobs (`jobs:` in the config) run as one matrix job. `gate`
 # runs with always() and fails on anything but success, except jobs the config turned off.
+# With `docs-only.enabled`, a pull request that changes documentation only turns off every
+# check and custom job without `docs-only: true` (lint by default); the gate still reports.
 #
 # Caller job permissions: contents: read, security-events: write (SARIF), pull-requests: read
 # (SonarCloud), actions: write (cancel-run). A caller granting less fails at startup even for
@@ -43,6 +45,9 @@ on:
       config:
         description: The normalized configuration (JSON).
         value: ${{ jobs.config.outputs.json }}
+      docs-only:
+        description: '"true" when this run skipped the heavy checks for a docs-only change.'
+        value: ${{ jobs.config.outputs.docs-only }}
 
 permissions:
   contents: read
@@ -57,6 +62,7 @@ jobs:
       jobs: ${{ steps.config.outputs.jobs }}
       skip-ok: ${{ steps.config.outputs.skip-ok }}
       draft-skip: ${{ steps.config.outputs.draft-skip }}
+      docs-only: ${{ steps.config.outputs.docs-only }}
     steps:
       - id: config
         uses: $/.github/actions/config # nosemgrep: github-actions-mutable-action-tag

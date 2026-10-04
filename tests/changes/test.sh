@@ -14,7 +14,8 @@ check() { # <name> <event> <changed files, comma-separated> <expected key=value 
   tr ',' '\n' <<<"$files" | sed '/^$/d' >"$tmp/changed"
   local got
   got="$(EVENT="$event" CHANGED_FILES_FILE="$tmp/changed" TREE_FILES_FILE="$tmp/tree" \
-    SWIFT_PATHS='^scripts/desktop/' GITHUB_OUTPUT="$tmp/out" GITHUB_STEP_SUMMARY='' \
+    SWIFT_PATHS='^scripts/desktop/' DOCS_PATHS='^docs/.*\.png$' NOT_DOCS_PATHS='^src/' \
+    GITHUB_OUTPUT="$tmp/out" GITHUB_STEP_SUMMARY='' \
     bash -c ': >"$GITHUB_OUTPUT"; bash "$0" >/dev/null; cat "$GITHUB_OUTPUT"' "$script")"
   local want bad=0
   for want in "$@"; do
@@ -27,7 +28,15 @@ check() { # <name> <event> <changed files, comma-separated> <expected key=value 
 }
 
 check docs-only pull_request README.md,docs/a.md \
-  forced=false rust=false rust_deps=false swift=false dotnet=false
+  forced=false rust=false rust_deps=false swift=false dotnet=false docs_only=true
+check docs-translations pull_request docs/uk/a.md,docs/ru/b.MD,plan.md docs_only=true
+check docs-extra-path pull_request docs/a.md,docs/img/shot.png docs_only=true
+check docs-not-docs-path pull_request docs/a.md,src/agents/README.md docs_only=false
+check docs-and-code pull_request docs/a.md,crates/a/src/lib.rs docs_only=false rust=true
+check docs-other-file pull_request docs/a.md,docs/a.txt docs_only=false
+check docs-github-md pull_request .github/pull_request_template.md forced=true docs_only=false
+check docs-empty-diff pull_request "" docs_only=false
+check docs-schedule schedule "" docs_only=false
 check cargo-lock pull_request Cargo.lock \
   rust=true rust_deps=true rust_full=true swift=false swift_full=false
 check member-manifest pull_request crates/a/Cargo.toml rust_deps=true rust_full=true

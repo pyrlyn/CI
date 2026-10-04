@@ -7,7 +7,9 @@ name: self-test
 # token (skips), dependabot-automerge on a non-Dependabot PR (every job skips),
 # revert-on-failure as a dry run of this PR's commits, macos-sign without secrets (skips),
 # setup-xcode (Xcode 27 on xcode-27, a missing version fails, a no-op on Linux),
-# the changes action (table test plus a live run), ci-dotnet.yml without a .NET project (no-op),
+# the changes action (table test plus a live run, docs_only included), the config action's
+# docs-only switch (table test; the `ci` job runs it live), ci-dotnet.yml without a .NET
+# project (no-op),
 # failure-digest.sh against a fake gh.
 # A change to a reusable workflow or action is exercised before any caller pins it.
 on:
@@ -164,6 +166,8 @@ jobs:
         with:
           persist-credentials: false
       - run: bash tests/changes/test.sh
+      # The config action's docs-only switch (normalize.py), offline.
+      - run: bash tests/config/test.sh
       - id: live
         uses: ./.github/actions/changes
       - name: Live outputs are booleans

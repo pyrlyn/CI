@@ -25,6 +25,16 @@ on:
         type: string
         required: false
         default: ""
+      docs-paths:
+        description: Extra extended regexes (one per line) whose files count as documentation.
+        type: string
+        required: false
+        default: ""
+      not-docs-paths:
+        description: Extended regexes (one per line) of files never counted as documentation.
+        type: string
+        required: false
+        default: ""
     outputs:
       forced:
         description: '"true" when every ecosystem runs in full (no diff, CI/toolchain change).'
@@ -59,6 +69,9 @@ on:
       dotnet_present:
         description: '"true" when the repository has a .NET project or solution.'
         value: ${{ jobs.changes.outputs.dotnet_present }}
+      docs_only:
+        description: '"true" when every changed file is documentation (no code, nothing forced).'
+        value: ${{ jobs.changes.outputs.docs_only }}
 
 permissions:
   contents: read
@@ -80,6 +93,7 @@ jobs:
       dotnet_deps: ${{ steps.changes.outputs.dotnet_deps }}
       dotnet_full: ${{ steps.changes.outputs.dotnet_full }}
       dotnet_present: ${{ steps.changes.outputs.dotnet_present }}
+      docs_only: ${{ steps.changes.outputs.docs_only }}
     steps:
       - id: changes
         uses: $/.github/actions/changes # nosemgrep: github-actions-mutable-action-tag
@@ -87,3 +101,5 @@ jobs:
           rust-paths: ${{ inputs.rust-paths }}
           swift-paths: ${{ inputs.swift-paths }}
           dotnet-paths: ${{ inputs.dotnet-paths }}
+          docs-paths: ${{ inputs.docs-paths }}
+          not-docs-paths: ${{ inputs.not-docs-paths }}

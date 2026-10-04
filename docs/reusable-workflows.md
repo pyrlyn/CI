@@ -82,7 +82,7 @@ Composite actions (reference them as `pyrlyn/infra/.github/actions/<name>@<sha>`
 | `setup-xcode` | select the pinned Xcode (default 27) with `xcode-select`; fails when it is missing |
 | `cancel-run` | cancel the current workflow run (last step, `if: failure()`); `actions: write` |
 | `notify-release-failure` | `release-failure` issue (mention + assign) for a failed release run |
-| `changes` | changed files by ecosystem: `rust`/`swift`/`dotnet`, `*_deps`, `*_full`, `*_present` |
+| `changes` | changed files by ecosystem: `rust`/`swift`/`dotnet`, `*_deps`, `*_full`, `*_present`; `docs_only` |
 
 Private repositories: no scans (CodeQL, Semgrep, Snyk, SonarCloud) by pyrlyn policy.
 
@@ -215,6 +215,11 @@ one), `<eco>_present` (the tree has such a project; `changes.yml` exports it for
 `forced` and `reason`. Inputs `rust-paths`, `swift-paths`, `dotnet-paths` add
 repository-specific regexes (one per line) that count as that ecosystem, e.g. a script that
 builds the app.
+
+`docs_only` is `true` when there is a diff, nothing forced the run, and every changed file is
+documentation: `*.md` (any directory, any case) or a `docs-paths` regex, and no
+`not-docs-paths` regex (Markdown that is code: `include_str!`, shipped, run by tests). ci.yml
+uses it for `docs-only` (docs/config.md, "Docs-only changes").
 
 It fails open: an event without a diff, a `.github/`, `mise.toml` or `.tool-versions` change,
 300 or more changed files, or any API error sets `forced` and every `<eco>`/`<eco>_full` to
