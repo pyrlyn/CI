@@ -147,3 +147,8 @@ workflow output), so a caller with local jobs can run the action itself and skip
     needs: changes
     if: needs.changes.outputs.docs-only != 'true'
 ```
+
+A required check from a matrix job, or from a job of a called workflow, cannot be skipped at
+job level (the skipped job reports one check under its raw name and the required ones wait).
+For ci-rust.yml pass `skip: ${{ needs.changes.outputs.docs-only == 'true' }}`: the matrix still
+expands and every step is a no-op. Gate the steps of a local matrix job the same way.
