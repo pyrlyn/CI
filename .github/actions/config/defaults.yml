@@ -10,11 +10,22 @@ skip-drafts: true
 # SARIF upload to code scanning: auto = public repositories only (Free plan).
 upload-sarif: auto
 
+# Docs-only changes (docs/config.md, "Docs-only changes"): with `enabled`, a change whose every
+# file is documentation (`*.md` or a `paths` match, no `exclude` match; the `changes` action)
+# skips each check and custom job whose own `docs-only` is false. The gate counts them as
+# passed, so a required `gate` still reports. Off by default.
+docs-only:
+  enabled: false
+  events: [pull_request, merge_group]  # push to main keeps every check
+  paths: []    # extended regexes of more documentation files, e.g. '^docs/.*\.(png|svg)$'
+  exclude: []  # extended regexes of Markdown that is code (include_str!, tests, releases)
+
 # `enabled`: true | false | auto (auto = public repositories only; pyrlyn policy: no scans on
 # private repositories). `events`: run only for these github.event_name values (empty = all).
 rust:
   enabled: false
   events: []
+  docs-only: false  # true: also runs on a docs-only change
   matrix: []            # [] = ci-rust.yml's shared four-target matrix
   rust-version: ""
   fmt-runs-on: ubuntu-latest
@@ -44,6 +55,7 @@ rust:
 dotnet:
   enabled: true
   events: []
+  docs-only: false
   dotnet-version: ""     # "" = global.json, else the runner's SDK
   working-directory: "."
   test-command: ""       # "" = dotnet test for every solution (or project)
@@ -54,6 +66,7 @@ dotnet:
 codeql:
   enabled: auto
   events: []
+  docs-only: false
   languages: [actions]
   build-mode: none
   build-command: ""
@@ -64,6 +77,7 @@ codeql:
 semgrep:
   enabled: auto
   events: []
+  docs-only: false
   config: p/default
   extra-args: ""
   fail-on-findings: false
@@ -74,12 +88,14 @@ semgrep:
 snyk:
   enabled: false
   events: []
+  docs-only: false
   args: --all-projects
   monitor: true
 
 sonarcloud:
   enabled: false
   events: []
+  docs-only: false
   organization: ""
   project-key: ""
   args: ""
@@ -95,6 +111,7 @@ sonarcloud:
 lint:
   enabled: true
   events: []
+  docs-only: true  # true: also runs on a docs-only change
   actionlint-version: 1.7.12
   args: ""
   extra-command: ""

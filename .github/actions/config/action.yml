@@ -4,7 +4,9 @@ description: >-
   config/repos/<repository name>.yml in pyrlyn/infra at the pinned commit, then the caller's
   own config file (default .github/infra.yml). Later files win key by key; lists are replaced.
   Emits `json` (normalized config: `<check>.run` booleans, input values), `jobs` (custom job
-  matrix) and `skip-ok` (checks the gate may see as skipped).
+  matrix), `skip-ok` (checks the gate may see as skipped) and `docs-only` (this change is
+  documentation only and `docs-only.enabled` is on; the `changes` action decides, through the
+  GitHub compare API). Usable on its own, e.g. a caller job that skips local heavy jobs too.
 inputs:
   config-file:
     description: Path of the caller's config file. A missing file means infra defaults.
@@ -14,6 +16,10 @@ inputs:
     description: '"true"/"false" overrides the config; empty keeps it.'
     required: false
     default: ""
+  token:
+    description: Token for the compare API calls of the docs-only check (contents read).
+    required: false
+    default: ${{ github.token }}
 outputs:
   json:
     description: Normalized configuration (JSON).
@@ -27,6 +33,10 @@ outputs:
   draft-skip:
     description: '"true" when this is a draft PR and skip-drafts is on.'
     value: ${{ steps.config.outputs.draft-skip }}
+  docs-only:
+    description: >-
+      "true" when docs-only is enabled for this event and every changed file is documentation.
+    value: ${{ steps.config.outputs.docs-only }}
 runs:
   using: composite
   steps:
@@ -47,6 +57,15 @@ runs:
         EVENT: ${{ github.event_name }}
         DRAFT: ${{ github.event.pull_request.draft }}
         CANCEL_OVERRIDE: ${{ inputs.cancel-run-on-failure }}
+        # For the `changes` action's script (docs-only), as in changes/action.yml.
+        GH_TOKEN: ${{ inputs.token }}
+        REPO: ${{ github.repository }}
+        BASE: >-
+          ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha
+          || github.event.before }}
+        HEAD: >-
+          ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha
+          || github.sha }}
       run: |
         set -euo pipefail
         files=("$ACTION_PATH/defaults.yml")
@@ -58,5 +77,20 @@ runs:
           echo "::notice title=infra config::no $CONFIG_FILE; using infra defaults"
         fi
         # yq (mikefarah) ships on GitHub-hosted runners: deep-merge maps, replace lists.
-        yq eval-all -o=json '. as $f ireduce ({}; . * $f)' "${files[@]}" \
-          | python3 "$ACTION_PATH/normalize.py"
+        merged="$(yq eval-all -o=json '. as $f ireduce ({}; . * $f)' "${files[@]}")"
+        # Docs-only: ask the `changes` action's script only when the config turns it on for
+        # this event. It fails open (no diff, API error, CI file changed: docs_only=false).
+        DOCS_ONLY=false
+        if jq -e --arg e "$EVENT" '(."docs-only" // {}) as $d | ($d.enabled == true)
+            and (($d.events // []) as $ev | ($ev | length) == 0 or ($ev | any(. == $e)))' \
+            <<<"$merged" >/dev/null; then
+          changes_out="$(mktemp)"
+          DOCS_PATHS="$(jq -r '(."docs-only".paths // [])[]' <<<"$merged")" \
+            NOT_DOCS_PATHS="$(jq -r '(."docs-only".exclude // [])[]' <<<"$merged")" \
+            EVENT="$EVENT" GITHUB_OUTPUT="$changes_out" \
+            bash "$ACTION_PATH/../changes/changes.sh"
+          DOCS_ONLY="$(sed -n 's/^docs_only=//p' "$changes_out")"
+          echo "docs-only: $DOCS_ONLY"
+        fi
+        export DOCS_ONLY
+        python3 "$ACTION_PATH/normalize.py" <<<"$merged"

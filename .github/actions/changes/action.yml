@@ -1,12 +1,13 @@
 name: changes
 description: >-
   Classify the files a pull request or push changed by ecosystem (Rust, Swift, .NET), so
-  callers pick which test suites run. `<eco>_deps` is true when a dependency manifest or lock
-  file of that ecosystem changed, and then `<eco>_full` is true: the caller must run that
-  ecosystem's full suite, whatever narrower selection it would make otherwise. Events without
-  a diff (schedule, workflow_dispatch, ...), a CI or toolchain change (.github/, mise.toml)
-  and any error force every output to true: the action fails open, never towards fewer tests.
-  Needs only `contents: read` (GitHub REST API; no checkout).
+  callers pick which test suites run, and tell whether they are all documentation
+  (`docs_only`). `<eco>_deps` is true when a dependency manifest or lock file of that ecosystem
+  changed, and then `<eco>_full` is true: the caller must run that ecosystem's full suite,
+  whatever narrower selection it would make otherwise. Events without a diff (schedule,
+  workflow_dispatch, ...), a CI or toolchain change (.github/, mise.toml) and any error force
+  every output to true: the action fails open, never towards fewer tests. Needs only
+  `contents: read` (GitHub REST API; no checkout).
 inputs:
   rust-paths:
     description: Extra extended regexes (one per line) whose changes count as Rust changes.
@@ -18,6 +19,17 @@ inputs:
     default: ""
   dotnet-paths:
     description: Extra extended regexes (one per line) whose changes count as .NET changes.
+    required: false
+    default: ""
+  docs-paths:
+    description: >-
+      Extra extended regexes (one per line) whose files count as documentation, beyond `*.md`.
+    required: false
+    default: ""
+  not-docs-paths:
+    description: >-
+      Extended regexes (one per line) of files that are never documentation, even `*.md`:
+      Markdown embedded in a binary (include_str!), run by a test or read by a release step.
     required: false
     default: ""
   token:
@@ -70,6 +82,11 @@ outputs:
   dotnet_present:
     description: '"true" when the tree has a .NET project or solution file.'
     value: ${{ steps.changes.outputs.dotnet_present }}
+  docs_only:
+    description: >-
+      "true" when there is a diff, nothing forced the run, and every changed file is
+      documentation (`*.md` or a `docs-paths` match, and no `not-docs-paths` match).
+    value: ${{ steps.changes.outputs.docs_only }}
 runs:
   using: composite
   steps:
@@ -89,4 +106,6 @@ runs:
         RUST_PATHS: ${{ inputs.rust-paths }}
         SWIFT_PATHS: ${{ inputs.swift-paths }}
         DOTNET_PATHS: ${{ inputs.dotnet-paths }}
+        DOCS_PATHS: ${{ inputs.docs-paths }}
+        NOT_DOCS_PATHS: ${{ inputs.not-docs-paths }}
       run: bash "$GITHUB_ACTION_PATH/changes.sh"
