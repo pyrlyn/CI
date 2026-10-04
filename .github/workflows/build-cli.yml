@@ -1,0 +1,165 @@
+name: build-cli
+
+# Reusable CLI build for a release: one job per matrix entry builds, signs (macOS, through
+# .github/actions/macos-keychain), smoke-tests and uploads the archives as the artifact
+# `<artifact-prefix><target>`. No trigger of its own and no publishing: the caller's release
+# workflow calls it next to build-macos-dmg.yml and hands both to publish-release.yml, so a
+# CLI and a desktop app land in one GitHub release.
+#
+# `package-command` runs from the repository root with TARGET, OUT_DIR and (macOS, when signed)
+# the identity in `identity-env` plus SIGNING_KEYCHAIN; it must leave its archives in OUT_DIR
+# and sign the macOS binary itself with that identity. `smoke-command` runs after it with the
+# same environment. Caller job permissions: contents: read.
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit to build (the release tag's commit). Empty builds the calling run's commit.
+        type: string
+        required: false
+        default: ""
+      matrix:
+        description: >-
+          JSON list of {"os": <runner>, "target": <triple>, "sign": <bool>}; `sign` imports the
+          signing identity (macOS runners only).
+        type: string
+        required: true
+      xcode-version:
+        description: Xcode selected on macOS runners (.github/actions/setup-xcode). Empty keeps the image's.
+        type: string
+        required: false
+        default: "27"
+      mise-install-args:
+        description: Tools jdx/mise-action installs from the caller's mise.toml. Empty skips mise.
+        type: string
+        required: false
+        default: rust
+      rust-cache:
+        description: Restore and save Swatinem/rust-cache.
+        type: boolean
+        required: false
+        default: true
+      setup-command:
+        description: Bash run before packaging (extra targets, system packages). Empty skips it.
+        type: string
+        required: false
+        default: ""
+      package-command:
+        description: Bash that builds, signs and archives TARGET into OUT_DIR, e.g. `scripts/package.sh "$TARGET" "$OUT_DIR"`.
+        type: string
+        required: true
+      smoke-command:
+        description: Bash run after packaging (e.g. unpack and run --version). Empty skips it.
+        type: string
+        required: false
+        default: ""
+      out-dir:
+        description: Directory package-command writes to, relative to the repository root.
+        type: string
+        required: false
+        default: dist
+      artifact-files:
+        description: Glob(s) under out-dir uploaded as the artifact.
+        type: string
+        required: false
+        default: "*.tar.xz *.tar.gz *.zip"
+      artifact-prefix:
+        description: Artifact name prefix; the target is appended.
+        type: string
+        required: false
+        default: cli-
+      require-signing:
+        description: Fail instead of building unsigned when the certificate secrets are missing.
+        type: boolean
+        required: false
+        default: true
+      identity-env:
+        description: Environment variable the signing identity is exported to.
+        type: string
+        required: false
+        default: MACOS_SIGN_IDENTITY
+    secrets:
+      MACOS_CERTIFICATE:
+        required: false
+      MACOS_CERTIFICATE_PWD:
+        required: false
+permissions:
+  contents: read
+env:
+  CARGO_TERM_COLOR: always
+jobs:
+  build:
+    name: cli (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(inputs.matrix) }}
+    env:
+      TARGET: ${{ matrix.target }}
+      OUT_DIR: ${{ inputs.out-dir }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - if: runner.os == 'macOS' && inputs.xcode-version != ''
+        uses: $/.github/actions/setup-xcode # nosemgrep: github-actions-mutable-action-tag
+        with:
+          version: ${{ inputs.xcode-version }}
+      - if: inputs.mise-install-args != ''
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          install_args: ${{ inputs.mise-install-args }}
+      - if: inputs.rust-cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: ${{ matrix.target }}
+      - name: Setup
+        if: inputs.setup-command != ''
+        env:
+          SETUP_COMMAND: ${{ inputs.setup-command }}
+        run: bash -euo pipefail -c "$SETUP_COMMAND"
+      - name: Import signing certificate
+        if: matrix.sign && runner.os == 'macOS'
+        uses: $/.github/actions/macos-keychain # nosemgrep: github-actions-mutable-action-tag
+        with:
+          certificate: ${{ secrets.MACOS_CERTIFICATE }}
+          password: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          required: ${{ inputs.require-signing && 'true' || 'false' }}
+          identity-env: ${{ inputs.identity-env }}
+      - name: Package
+        env:
+          PACKAGE_COMMAND: ${{ inputs.package-command }}
+        run: |
+          mkdir -p "$OUT_DIR"
+          bash -euo pipefail -c "$PACKAGE_COMMAND"
+      - name: Remove signing keychain
+        if: always() && env.SIGNING_KEYCHAIN != ''
+        run: security delete-keychain "$SIGNING_KEYCHAIN"
+      - name: Smoke test
+        if: inputs.smoke-command != ''
+        env:
+          SMOKE_COMMAND: ${{ inputs.smoke-command }}
+        run: bash -euo pipefail -c "$SMOKE_COMMAND"
+      - name: Files to upload
+        id: files
+        env:
+          FILES: ${{ inputs.artifact-files }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          cd "$OUT_DIR"
+          found=()
+          for pattern in $FILES; do
+            # shellcheck disable=SC2206 # the pattern is meant to glob here
+            matches=($pattern)
+            found+=("${matches[@]}")
+          done
+          [ ${#found[@]} -gt 0 ] || { echo "no $FILES in $OUT_DIR" >&2; ls -la >&2; exit 1; }
+          { echo "paths<<EOF"; printf '%s\n' "${found[@]/#/$OUT_DIR/}"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs.artifact-prefix }}${{ matrix.target }}
+          path: ${{ steps.files.outputs.paths }}
+          if-no-files-found: error

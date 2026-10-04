@@ -1,0 +1,179 @@
+name: build-macos-dmg
+
+# Reusable macOS app build for a release: builds the .app, packs it into a DMG, checks the DMG
+# as someone downloads it and uploads it as the artifact `artifact-name`. Signed with the same
+# Developer ID setup build-cli.yml uses (.github/actions/macos-keychain), so a release has one
+# signing setup; no notarisation (use release-apple-desktop.yml for notarised, stapled,
+# Sparkle-fed production app releases). No trigger of its own and no publishing: the caller's
+# release workflow calls it next to build-cli.yml and hands both to publish-release.yml.
+#
+# `build-command` runs from the repository root with BUILD_NUMBER (the run number) and, when
+# signed, the identity in `identity-env` plus SIGNING_KEYCHAIN. It builds and signs the app,
+# makes the DMG, and prints the DMG's path as its last line of stdout. The check then mounts
+# it and requires `<app-name>.app` with an Info.plist naming an executable that exists, an
+# /Applications link (unless `require-applications-link` is false), the architectures in
+# `archs`, and a valid code signature (Developer ID when signed). Caller job permissions:
+# contents: read.
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit to build (the release tag's commit). Empty builds the calling run's commit.
+        type: string
+        required: false
+        default: ""
+      runs-on:
+        description: macOS runner label.
+        type: string
+        required: false
+        default: xcode-27
+      xcode-version:
+        description: Xcode selected (.github/actions/setup-xcode). Empty keeps the image's.
+        type: string
+        required: false
+        default: "27"
+      timeout-minutes:
+        description: Timeout of the build job.
+        type: number
+        required: false
+        default: 90
+      mise-install-args:
+        description: Tools jdx/mise-action installs from the caller's mise.toml. Empty skips mise.
+        type: string
+        required: false
+        default: ""
+      setup-command:
+        description: Bash run before the build (toolchains, frameworks the app links). Empty skips it.
+        type: string
+        required: false
+        default: ""
+      build-command:
+        description: Bash that builds and signs the app and the DMG; its last stdout line is the DMG path.
+        type: string
+        required: true
+      app-name:
+        description: The bundle inside the DMG, without `.app`.
+        type: string
+        required: true
+      archs:
+        description: Space-separated architectures the app's executable must contain.
+        type: string
+        required: false
+        default: arm64
+      require-applications-link:
+        description: Require an /Applications symlink at the DMG's root.
+        type: boolean
+        required: false
+        default: true
+      artifact-name:
+        description: Name of the uploaded artifact holding the DMG.
+        type: string
+        required: false
+        default: macos-dmg
+      require-signing:
+        description: Fail instead of building without a Developer ID when the certificate secrets are missing.
+        type: boolean
+        required: false
+        default: true
+      identity-env:
+        description: Environment variable the signing identity is exported to.
+        type: string
+        required: false
+        default: MACOS_SIGN_IDENTITY
+    secrets:
+      MACOS_CERTIFICATE:
+        required: false
+      MACOS_CERTIFICATE_PWD:
+        required: false
+    outputs:
+      dmg:
+        description: File name of the DMG.
+        value: ${{ jobs.app.outputs.dmg }}
+permissions:
+  contents: read
+jobs:
+  app:
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    outputs:
+      dmg: ${{ steps.build.outputs.name }}
+    env:
+      BUILD_NUMBER: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - if: inputs.xcode-version != ''
+        uses: $/.github/actions/setup-xcode # nosemgrep: github-actions-mutable-action-tag
+        with:
+          version: ${{ inputs.xcode-version }}
+      - if: inputs.mise-install-args != ''
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          install_args: ${{ inputs.mise-install-args }}
+      - name: Setup
+        if: inputs.setup-command != ''
+        env:
+          SETUP_COMMAND: ${{ inputs.setup-command }}
+        run: bash -euo pipefail -c "$SETUP_COMMAND"
+      - name: Import signing certificate
+        id: sign
+        uses: $/.github/actions/macos-keychain # nosemgrep: github-actions-mutable-action-tag
+        with:
+          certificate: ${{ secrets.MACOS_CERTIFICATE }}
+          password: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          required: ${{ inputs.require-signing && 'true' || 'false' }}
+          identity-env: ${{ inputs.identity-env }}
+      - name: Build the app and the DMG
+        id: build
+        env:
+          BUILD_COMMAND: ${{ inputs.build-command }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/build.out"
+          bash -euo pipefail -c "$BUILD_COMMAND" | tee "$out"
+          dmg="$(tail -n 1 "$out")"
+          [ -f "$dmg" ] || { echo "build-command's last line is not a file: $dmg" >&2; exit 1; }
+          case "$dmg" in *.dmg) ;; *) echo "not a .dmg: $dmg" >&2; exit 1 ;; esac
+          { echo "path=$(cd "$(dirname "$dmg")" && pwd)/$(basename "$dmg")"; echo "name=$(basename "$dmg")"; } >> "$GITHUB_OUTPUT"
+      - name: Remove signing keychain
+        if: always() && env.SIGNING_KEYCHAIN != ''
+        run: security delete-keychain "$SIGNING_KEYCHAIN"
+      - name: Check the DMG
+        env:
+          DMG: ${{ steps.build.outputs.path }}
+          APP_NAME: ${{ inputs.app-name }}
+          ARCHS: ${{ inputs.archs }}
+          NEED_LINK: ${{ inputs.require-applications-link }}
+          SIGNED: ${{ steps.sign.outputs.signed }}
+        run: |
+          set -euo pipefail
+          hdiutil verify -quiet "$DMG"
+          mnt="$(mktemp -d)"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mnt" "$DMG" >/dev/null
+          trap 'hdiutil detach "$mnt" -force >/dev/null || true' EXIT
+          app="$mnt/$APP_NAME.app"
+          [ -d "$app" ] || { echo "no $APP_NAME.app in $DMG:" >&2; ls -la "$mnt" >&2; exit 1; }
+          if [ "$NEED_LINK" = true ] && [ ! -L "$mnt/Applications" ]; then
+            echo "no /Applications link in $DMG" >&2; exit 1
+          fi
+          plist="$app/Contents/Info.plist"
+          exe="$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$plist")"
+          [ -x "$app/Contents/MacOS/$exe" ] || { echo "$exe is not an executable in $APP_NAME.app" >&2; exit 1; }
+          have="$(lipo -archs "$app/Contents/MacOS/$exe")"
+          for a in $ARCHS; do
+            grep -qw "$a" <<<"$have" || { echo "$exe lacks $a (has $have)" >&2; exit 1; }
+          done
+          codesign --verify --deep --strict --verbose=2 "$app"
+          if [ "$SIGNED" = true ]; then
+            codesign --display --verbose=2 "$app" 2>&1 | grep -q 'Authority=Developer ID Application' \
+              || { echo "$APP_NAME.app is not signed by a Developer ID Application identity" >&2; exit 1; }
+          fi
+          version="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$plist")"
+          echo "$(basename "$DMG"): $APP_NAME.app $version ($exe, $have), $(du -h "$DMG" | cut -f1)" | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: ${{ steps.build.outputs.path }}
+          if-no-files-found: error
