@@ -1,0 +1,92 @@
+name: warnings-to-issues
+description: >-
+  Mirror the repository's linter and security warnings as GitHub issues: code scanning alerts
+  (every SARIF tool: CodeQL, Semgrep, ...) and, with a project key, SonarCloud issues. One
+  issue per warning in the severity set, deduplicated by a fingerprint hidden in the body,
+  closed with a comment when the warning is fixed or dismissed. Never assigns anyone. Needs
+  `issues: write` and `security-events: read` on the job; runs on any runner with `gh` and
+  python3 (GitHub-hosted ones). Only reads and writes issues: it never fails a CI run.
+inputs:
+  dry-run:
+    description: '"true": print what would be created, commented on and closed; write nothing.'
+    required: false
+    default: "false"
+  severities:
+    description: >-
+      Effective severities that get an issue (comma-separated): error, warning, note (code
+      scanning rule severity), critical, high, medium, low (code scanning security severity;
+      SonarCloud BLOCKER, CRITICAL, MAJOR, MINOR map to critical, high, medium, low, INFO to
+      note).
+    required: false
+    default: warning,note,medium,low
+  max-create:
+    description: Most issues opened or reopened per run; the rest wait for the next run.
+    required: false
+    default: "20"
+  label:
+    description: Label on every issue; it is also how the action finds its issues.
+    required: false
+    default: warning
+  code-scanning:
+    description: '"false" skips code scanning alerts.'
+    required: false
+    default: "true"
+  tools:
+    description: Code scanning tool names to include, comma-separated (e.g. "CodeQL"). Empty = all.
+    required: false
+    default: ""
+  sonar-project-key:
+    description: SonarCloud project key (e.g. listepo_rtok). Empty = no SonarCloud.
+    required: false
+    default: ""
+  sonar-host:
+    description: SonarCloud (or SonarQube) URL.
+    required: false
+    default: https://sonarcloud.io
+  sonar-branch:
+    description: SonarCloud branch. Empty = the project's main branch.
+    required: false
+    default: ""
+  sonar-token:
+    description: SonarCloud token; only needed for a private project.
+    required: false
+    default: ""
+  comment-on-change:
+    description: '"true": one comment on the open issue when its warning moved.'
+    required: false
+    default: "true"
+  token:
+    description: "Token with `issues: write` and `security-events: read`."
+    required: false
+    default: ${{ github.token }}
+outputs:
+  created:
+    description: Issues opened (in a dry run: the ones it would open).
+    value: ${{ steps.sync.outputs.create }}
+  closed:
+    description: Issues closed (in a dry run: the ones it would close).
+    value: ${{ steps.sync.outputs.close }}
+  deferred:
+    description: Warnings left for a later run by max-create.
+    value: ${{ steps.sync.outputs.deferred }}
+runs:
+  using: composite
+  steps:
+    - id: sync
+      name: Sync warnings with issues
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        GH_REPO: ${{ github.repository }}
+        DRY_RUN: ${{ inputs.dry-run }}
+        SEVERITIES: ${{ inputs.severities }}
+        MAX_CREATE: ${{ inputs.max-create }}
+        LABEL: ${{ inputs.label }}
+        CODE_SCANNING: ${{ inputs.code-scanning }}
+        TOOLS: ${{ inputs.tools }}
+        SONAR_PROJECT_KEY: ${{ inputs.sonar-project-key }}
+        SONAR_HOST: ${{ inputs.sonar-host }}
+        SONAR_BRANCH: ${{ inputs.sonar-branch }}
+        SONAR_TOKEN: ${{ inputs.sonar-token }}
+        COMMENT_ON_CHANGE: ${{ inputs.comment-on-change }}
+      run: python3 "$GITHUB_ACTION_PATH/warnings_to_issues.py"
