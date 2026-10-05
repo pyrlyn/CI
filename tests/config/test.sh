@@ -20,7 +20,7 @@ check() { # <name> <event> <DOCS_ONLY> <jq patch> <expected key=value ...>
   local name="$1" event="$2" docs="$3" patch="$4"
   shift 4
   : >"$tmp/out"
-  if ! jq "$patch" <<<"$base" | EVENT="$event" DOCS_ONLY="$docs" PRIVATE=false DRAFT=false \
+  if ! jq "$patch" <<<"$base" | EVENT="$event" DOCS_ONLY="$docs" PRIVATE=false DRAFT="${DRAFT:-false}" \
       GITHUB_OUTPUT="$tmp/out" GITHUB_STEP_SUMMARY='' python3 "$script" >"$tmp/log" 2>&1; then
     echo "FAIL $name: normalize.py failed: $(cat "$tmp/log")"
     fail=1
@@ -57,6 +57,18 @@ check docs-only-disabled pull_request true '."docs-only".enabled = false' \
 check no-docs-only-section pull_request true 'del(."docs-only")' docs-only=false run:rust=true
 check docs-only-custom-all-skipped pull_request true '.jobs = [{"name": "heavy", "run": "true"}]' \
   docs-only=true "skip-ok=rust dotnet codeql semgrep snyk sonarcloud custom"
+
+# Draft PR with skip-drafts: every check is skipped (draft-skip), but `docs-only` still reports
+# the change, so a caller's local jobs can skip their heavy work on a docs-only draft too.
+DRAFT=true check docs-only-draft pull_request true . \
+  docs-only=true draft-skip=true \
+  "skip-ok=rust dotnet codeql semgrep snyk sonarcloud lint custom" \
+  run:rust=false run:lint=false
+DRAFT=true check code-draft pull_request false . \
+  docs-only=false draft-skip=true \
+  "skip-ok=rust dotnet codeql semgrep snyk sonarcloud lint custom" run:rust=false
+DRAFT=true check docs-only-draft-no-skip-drafts pull_request true '."skip-drafts" = false' \
+  docs-only=true draft-skip=false run:rust=false run:lint=true
 
 # Bad config fails the job.
 : >"$tmp/out"
