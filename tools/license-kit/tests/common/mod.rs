@@ -12,7 +12,7 @@ pub fn crate_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-/// The pyrlyn/infra checkout this crate lives in.
+/// The pyrlyn/ci checkout this crate lives in.
 pub fn infra_root() -> PathBuf {
     crate_dir()
         .join("../..")

@@ -1,4 +1,4 @@
-//! Sync and check pyrlyn/infra's canonical license files in GPL repositories.
+//! Sync and check pyrlyn/ci's canonical license files in GPL repositories.
 //!
 //! `licenses/targets.yml` (see [`config`]) maps each target repository to the paths of its
 //! copies; `licenses/<file>` holds the single source of truth. GitHub access goes through the

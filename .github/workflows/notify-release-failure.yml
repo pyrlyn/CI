@@ -14,7 +14,7 @@ name: notify-release-failure
 #     permissions:
 #       actions: read
 #       issues: write
-#     uses: pyrlyn/infra/.github/workflows/notify-release-failure.yml@<sha>
+#     uses: pyrlyn/ci/.github/workflows/notify-release-failure.yml@<sha>
 #     with:
 #       ref: ${{ inputs.tag || github.ref_name }}
 #       needs: ${{ toJSON(needs) }}

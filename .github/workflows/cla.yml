@@ -36,12 +36,12 @@ on:
           and `cla-version` in step with it.
         type: string
         required: false
-        default: https://github.com/pyrlyn/infra/blob/f814709343352f44195aaf362ad67c827c435b44/CLA.md
+        default: https://github.com/pyrlyn/ci/blob/f814709343352f44195aaf362ad67c827c435b44/CLA.md
       document-url-ru:
         description: URL of the Russian translation of the agreement.
         type: string
         required: false
-        default: https://github.com/pyrlyn/infra/blob/f814709343352f44195aaf362ad67c827c435b44/CLA.ru.md
+        default: https://github.com/pyrlyn/ci/blob/f814709343352f44195aaf362ad67c827c435b44/CLA.ru.md
       document-sha256:
         description: SHA-256 hex digest of the file at `document-url`, stored with each signature.
         type: string
@@ -168,10 +168,10 @@ jobs:
           signatures-path: ${{ inputs.signatures-path || 'signatures/cla.json' }}
           document-url: >-
             ${{ inputs.document-url
-            || 'https://github.com/pyrlyn/infra/blob/f814709343352f44195aaf362ad67c827c435b44/CLA.md' }}
+            || 'https://github.com/pyrlyn/ci/blob/f814709343352f44195aaf362ad67c827c435b44/CLA.md' }}
           document-url-ru: >-
             ${{ inputs.document-url-ru
-            || 'https://github.com/pyrlyn/infra/blob/f814709343352f44195aaf362ad67c827c435b44/CLA.ru.md' }}
+            || 'https://github.com/pyrlyn/ci/blob/f814709343352f44195aaf362ad67c827c435b44/CLA.ru.md' }}
           document-sha256: >-
             ${{ inputs.document-sha256
             || 'fc128adcbc7b2ef89da7a0067de8ef5bb55c996066bc314966fc5f3cc5d44e04' }}

@@ -1,3 +1,3 @@
 # release-plz.yml: only the pin changes (already grants actions: write).
--    uses: pyrlyn/infra/.github/workflows/release-plz.yml@189816ac5a375e18e0235044970efcbc40e3cabd
-+    uses: pyrlyn/infra/.github/workflows/release-plz.yml@<SHA> # main
+-    uses: pyrlyn/ci/.github/workflows/release-plz.yml@189816ac5a375e18e0235044970efcbc40e3cabd
++    uses: pyrlyn/ci/.github/workflows/release-plz.yml@<SHA> # main

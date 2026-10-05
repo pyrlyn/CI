@@ -245,7 +245,7 @@ impl GitHub for GhCli {
     fn open_pr(&self, repo: &str, pr: &PrRequest) -> Result<u64> {
         let (ok, _, err) = gh(&["api", &format!("repos/{repo}/labels/{}", pr.label)], None)?;
         if !ok && not_found(&err) {
-            let body = json!({"name": pr.label, "color": "0e8a16", "description": "License sync from pyrlyn/infra"});
+            let body = json!({"name": pr.label, "color": "0e8a16", "description": "License sync from pyrlyn/ci"});
             gh_ok(
                 &[
                     "api",

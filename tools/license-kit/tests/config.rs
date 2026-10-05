@@ -57,7 +57,7 @@ fn targets_are_pyrlyn_and_map_every_kind() {
             "{} is not a pyrlyn repository",
             t.repo
         );
-        assert_ne!(t.repo, "pyrlyn/infra", "infra is the source, not a target");
+        assert_ne!(t.repo, "pyrlyn/ci", "infra is the source, not a target");
         for kind in cfg.canonical.keys() {
             assert!(
                 t.files.contains_key(kind),
@@ -119,8 +119,8 @@ fn license_check_workflow_reads_infra_canonical_files() {
         .expect("check steps");
     let infra = steps
         .iter()
-        .find(|s| s["with"]["repository"].as_str() == Some("pyrlyn/infra"))
-        .expect("a checkout of pyrlyn/infra");
+        .find(|s| s["with"]["repository"].as_str() == Some("pyrlyn/ci"))
+        .expect("a checkout of pyrlyn/ci");
     let sparse = infra["with"]["sparse-checkout"]
         .as_str()
         .unwrap_or_default();
@@ -166,8 +166,8 @@ fn caller_example_points_at_the_reusable_workflow() {
         .find_map(|l| l.trim().strip_prefix("uses: "))
         .expect("a caller example with `uses:`");
     let path = uses
-        .strip_prefix("pyrlyn/infra/")
-        .expect("calls pyrlyn/infra")
+        .strip_prefix("pyrlyn/ci/")
+        .expect("calls pyrlyn/ci")
         .split('@')
         .next()
         .unwrap();

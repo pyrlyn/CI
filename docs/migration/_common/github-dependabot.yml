@@ -1,9 +1,9 @@
 # Add to each consumer's .github/dependabot.yml (config file, not a workflow) so the
-# pyrlyn/infra@<SHA> pins move by PR. Keep the repo's other ecosystems as they are.
+# pyrlyn/ci@<SHA> pins move by PR. Keep the repo's other ecosystems as they are.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
     groups:
       pyrlyn-infra:
-        patterns: ["pyrlyn/infra/*"]
+        patterns: ["pyrlyn/ci/*"]

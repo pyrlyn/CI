@@ -145,7 +145,7 @@ that runs its local jobs on drafts skips their heavy work there too:
       docs-only: ${{ steps.config.outputs.docs-only }}
     steps:
       - id: config
-        uses: pyrlyn/infra/.github/actions/config@<sha> # main
+        uses: pyrlyn/ci/.github/actions/config@<sha> # main
   heavy:
     needs: changes
     if: needs.changes.outputs.docs-only != 'true'
