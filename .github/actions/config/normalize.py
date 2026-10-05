@@ -82,8 +82,10 @@ def main():
     for key in ("paths", "exclude"):
         if not isinstance(docs.get(key) or [], list):
             fail(f"docs-only.{key} must be a list of regexes")
-    docs_only = (docs.get("enabled", False) and event_ok(docs.get("events"), event, "docs-only")
-                 and docs_detected and not skip_all)
+    # Independent of skip_all: a caller's local jobs read `docs-only` on a draft PR too (their own
+    # draft handling is theirs). The checks below are off on a skipped draft either way.
+    docs_only = bool(docs.get("enabled", False)
+                     and event_ok(docs.get("events"), event, "docs-only") and docs_detected)
     docs["active"] = docs_only
     cfg["docs-only"] = docs
     cfg["upload-sarif"] = as_bool(cfg.get("upload-sarif", "auto"), private, "upload-sarif")
