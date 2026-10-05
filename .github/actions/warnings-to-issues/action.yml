@@ -61,10 +61,10 @@ inputs:
     default: ${{ github.token }}
 outputs:
   created:
-    description: Issues opened (in a dry run: the ones it would open).
+    description: "Issues opened (in a dry run, the ones it would open)."
     value: ${{ steps.sync.outputs.create }}
   closed:
-    description: Issues closed (in a dry run: the ones it would close).
+    description: "Issues closed (in a dry run, the ones it would close)."
     value: ${{ steps.sync.outputs.close }}
   deferred:
     description: Warnings left for a later run by max-create.
