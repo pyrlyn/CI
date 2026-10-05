@@ -133,7 +133,10 @@ Markdown that a test validates still needs that test: give the repository a chea
 (or local job) with `docs-only: true` that runs it.
 
 The config action exposes the verdict as its `docs-only` output (and ci.yml as the `docs-only`
-workflow output), so a caller with local jobs can run the action itself and skip them too:
+workflow output), so a caller with local jobs can run the action itself and skip them too. The
+verdict does not depend on `skip-drafts`: on a draft pull request `draft-skip` turns every check
+off as before, and `docs-only` is still `true` for a documentation-only change, so a caller
+that runs its local jobs on drafts skips their heavy work there too:
 
 ```yaml
   changes:
