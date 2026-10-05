@@ -280,6 +280,9 @@ dependency change.
   (for `manual`), `queries` (`security-and-quality`), `config-file`, `runs-on`, `upload`.
   Keep the repository's CodeQL *default setup* off.
 - semgrep: `config` (`p/default`), `extra-args`, `fail-on-findings` (`false`), `upload`.
+  Results suppressed in source (`# nosemgrep: <rule>`) are removed from the SARIF before the
+  upload: Semgrep keeps them with a `suppressions` mark that code scanning ignores, so each
+  would otherwise stay an open alert (and become an issue through warnings-to-issues).
 - snyk: `args` (`--all-projects`), `monitor` (`true`), `upload`; secret `SNYK_TOKEN`.
   Snyk CLI does not test Cargo projects; it covers npm, pub, Go, Python, NuGet manifests.
 - Snyk is switched off org-wide (kept, not removed): `snyk.enabled: false` in ci.yml's
