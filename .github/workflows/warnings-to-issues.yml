@@ -16,7 +16,7 @@ name: warnings-to-issues
 #     schedule:
 #       - cron: "30 6 * * *"
 #     workflow_run:
-#       workflows: [ci]
+#       workflows: [pipeline] # the workflow that calls ci.yml and uploads SARIF
 #       types: [completed]
 #       branches: [main]
 #     workflow_dispatch:

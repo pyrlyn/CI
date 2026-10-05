@@ -465,7 +465,7 @@ on:
   schedule:
     - cron: "30 6 * * *" # daily
   workflow_run: # right after CI on main uploaded fresh SARIF
-    workflows: [ci]
+    workflows: [pipeline] # the consumer's caller of ci.yml (pipeline.yml in pyrlyn repos)
     types: [completed]
     branches: [main]
   workflow_dispatch:
