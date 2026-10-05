@@ -1,0 +1,143 @@
+name: warnings-to-issues
+
+# Reusable: turn the caller's linter and security warnings into GitHub issues
+# (.github/actions/warnings-to-issues). Sources: code scanning alerts on the default branch
+# (every SARIF upload: CodeQL, Semgrep, Snyk, ...) and, with `sonar-project-key`, SonarCloud
+# issues. One issue per warning in `severities`, deduplicated by a fingerprint hidden in the
+# body (`<!-- warning-fingerprint: code-scanning/<alert> -->`,
+# `<!-- warning-fingerprint: sonar/<project>/<issue> -->`); labels `warning`, the source
+# (`code-scanning`, `sonar`) and `severity:<level>`; never assigned. An issue whose warning is
+# gone is closed with a comment; `max-create` caps new issues per run. CI is not involved:
+# the scans keep reporting warnings without failing, this only reads their results.
+#
+# Caller (one per repository; see docs/reusable-workflows.md):
+#
+#   on:
+#     schedule:
+#       - cron: "30 6 * * *"
+#     workflow_run:
+#       workflows: [pipeline] # the workflow that calls ci.yml and uploads SARIF
+#       types: [completed]
+#       branches: [main]
+#     workflow_dispatch:
+#       inputs:
+#         dry-run: {type: boolean, default: false}
+#   concurrency:
+#     group: warnings-to-issues
+#     cancel-in-progress: false
+#   jobs:
+#     warnings:
+#       permissions:
+#         contents: read
+#         issues: write
+#         security-events: read
+#       uses: pyrlyn/infra/.github/workflows/warnings-to-issues.yml@<sha>
+#       with:
+#         dry-run: ${{ inputs.dry-run || false }}
+#
+# Caller job permissions: contents: read, issues: write, security-events: read.
+# Secrets: SONAR_TOKEN (optional; public SonarCloud projects are read without it).
+on:
+  workflow_call:
+    inputs:
+      dry-run:
+        description: Print what would be created, commented on and closed; write nothing.
+        type: boolean
+        required: false
+        default: false
+      severities:
+        description: >-
+          Effective severities that get an issue, comma-separated: error, warning, note (code
+          scanning rule severity); critical, high, medium, low (security severity, which wins
+          when the rule has one; SonarCloud BLOCKER/CRITICAL/MAJOR/MINOR map to
+          critical/high/medium/low, INFO to note). Default: warnings, not errors.
+        type: string
+        required: false
+        default: warning,note,medium,low
+      max-create:
+        description: Most issues opened or reopened per run; the rest wait for the next run.
+        type: number
+        required: false
+        default: 20
+      label:
+        description: Label on every issue (created when missing); the index of its issues.
+        type: string
+        required: false
+        default: warning
+      code-scanning:
+        description: Sync code scanning alerts.
+        type: boolean
+        required: false
+        default: true
+      tools:
+        description: Code scanning tool names to include, comma-separated. Empty = all.
+        type: string
+        required: false
+        default: ""
+      sonar-project-key:
+        description: SonarCloud project key (sonar.projectKey). Empty = no SonarCloud.
+        type: string
+        required: false
+        default: ""
+      sonar-host:
+        description: SonarCloud (or SonarQube) URL.
+        type: string
+        required: false
+        default: https://sonarcloud.io
+      sonar-branch:
+        description: SonarCloud branch. Empty = the project's main branch.
+        type: string
+        required: false
+        default: ""
+      comment-on-change:
+        description: One comment on the open issue when its warning moved to another line.
+        type: boolean
+        required: false
+        default: true
+    secrets:
+      SONAR_TOKEN:
+        description: SonarCloud token (optional; only for a private project).
+        required: false
+    outputs:
+      created:
+        description: Issues opened by this run.
+        value: ${{ jobs.sync.outputs.created }}
+      closed:
+        description: Issues closed by this run.
+        value: ${{ jobs.sync.outputs.closed }}
+      deferred:
+        description: Warnings left for a later run by max-create.
+        value: ${{ jobs.sync.outputs.deferred }}
+
+permissions:
+  contents: read
+  issues: write
+  security-events: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+      security-events: read
+    outputs:
+      created: ${{ steps.sync.outputs.created }}
+      closed: ${{ steps.sync.outputs.closed }}
+      deferred: ${{ steps.sync.outputs.deferred }}
+    steps:
+      - id: sync
+        uses: $/.github/actions/warnings-to-issues # nosemgrep: github-actions-mutable-action-tag
+        with:
+          dry-run: ${{ inputs.dry-run }}
+          severities: ${{ inputs.severities }}
+          max-create: ${{ inputs.max-create }}
+          label: ${{ inputs.label }}
+          code-scanning: ${{ inputs.code-scanning }}
+          tools: ${{ inputs.tools }}
+          sonar-project-key: ${{ inputs.sonar-project-key }}
+          sonar-host: ${{ inputs.sonar-host }}
+          sonar-branch: ${{ inputs.sonar-branch }}
+          sonar-token: ${{ secrets.SONAR_TOKEN }}
+          comment-on-change: ${{ inputs.comment-on-change }}
