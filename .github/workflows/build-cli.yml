@@ -101,7 +101,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.ref }}
+          # For PR contexts, force checkout of the trusted workflow commit instead of caller-controlled refs.
+          # For non-PR contexts (intended release callers), keep honoring inputs.ref.
+          ref: ${{ github.event_name == 'pull_request' && github.sha || inputs.ref }}
           persist-credentials: false
       - if: runner.os == 'macOS' && inputs.xcode-version != ''
         uses: $/.github/actions/setup-xcode # nosemgrep: github-actions-mutable-action-tag
