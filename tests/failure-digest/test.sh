@@ -69,7 +69,7 @@ chmod +x "$tmp/bin/gh"
 repos="pyrlyn/ci pyrlyn/rtok,pyrlyn/ketch
 pyrlyn/cox pyrlyn/runa"
 now=1790834400 # 2026-10-01T06:00:00Z, 09:00 EEST
-setup() { rm -rf "$tmp/fake"; mkdir -p "$tmp/fake"/pyrlyn_{infra,rtok,ketch,cox,runa}; : >"$tmp/fake/log"; }
+setup() { rm -rf "$tmp/fake"; mkdir -p "$tmp/fake"/pyrlyn_{ci,rtok,ketch,cox,runa}; : >"$tmp/fake/log"; }
 run_digest() {
   env -u LABEL -u WHO -u RELEASE_LABEL -u SINCE_HOURS -u DIGEST_TZ PATH="$tmp/bin:$PATH" \
     FAKE="$tmp/fake" REPOS="$repos" GH_REPO=pyrlyn/ci NOW="$now" GH_TOKEN=fake bash "$script"
