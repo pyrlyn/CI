@@ -19,7 +19,7 @@ permissions:
 
 jobs:
   sync:
-    uses: listepo/infra/.github/workflows/sync-docs.yml@<SHA> # main
+    uses: pyrlyn/infra/.github/workflows/sync-docs.yml@<SHA> # main
     permissions:
       contents: read
     # Internal pages beyond the shared list (research, qa, design, plans, runbooks, ...), one

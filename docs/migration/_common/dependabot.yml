@@ -20,7 +20,7 @@ jobs:
       github.actor == 'dependabot[bot]'
       && github.event.pull_request.user.login == 'dependabot[bot]'
       && github.event.pull_request.head.repo.full_name == github.repository
-    uses: listepo/infra/.github/workflows/dependabot-automerge.yml@<SHA> # main
+    uses: pyrlyn/infra/.github/workflows/dependabot-automerge.yml@<SHA> # main
     permissions:
       contents: write
       pull-requests: write
