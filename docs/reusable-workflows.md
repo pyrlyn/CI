@@ -76,7 +76,7 @@ that asks for more than its caller grants), even with the input off. Pass
 e.g. a Dependabot flow whose notify job reports a failed CI. `dependabot-automerge.yml` has no
 cancel step for the same reason: its `notify-failure` must run after `automerge` fails.
 
-Composite actions (reference them as `pyrlyn/infra/.github/actions/<name>@<sha>`):
+Composite actions (reference them as `pyrlyn/ci/.github/actions/<name>@<sha>`):
 
 | Action | Purpose |
 | --- | --- |
@@ -94,14 +94,14 @@ Private repositories: no scans (CodeQL, Semgrep, Snyk, SonarCloud) by pyrlyn pol
 ## Referencing and pinning
 
 ```yaml
-uses: pyrlyn/infra/.github/workflows/pipeline.yml@<full-sha> # main 2026-09-27
+uses: pyrlyn/ci/.github/workflows/pipeline.yml@<full-sha> # main 2026-09-27
 ```
 
 - Pin to a full commit SHA (optionally with a `# vX.Y.Z` comment once tags exist). Dependabot
   (`package-ecosystem: github-actions`) updates SHA-pinned reusable workflow refs like action
   refs, so the pin moves by pull request.
 - Inside this repository, workflows call each other with `$/.github/workflows/<file>` (GitHub's
-  self-repository syntax, July 2026): the nested call resolves to pyrlyn/infra at the commit
+  self-repository syntax, July 2026): the nested call resolves to pyrlyn/ci at the commit
   the caller pinned, never to the caller's repository and never to `main`.
 - GitHub limits (github.com): 10 levels of nesting, 50 unique reusable workflows per run.
   The deepest chain here is caller -> pipeline.yml -> ci-rust.yml (3 levels).
@@ -157,7 +157,7 @@ concurrency:
 
 ## Free plan and private repositories
 
-pyrlyn/infra is public, so any repository (public or private) can call it. Code scanning
+pyrlyn/ci is public, so any repository (public or private) can call it. Code scanning
 (uploading SARIF from CodeQL, Semgrep or Snyk) is free for public repositories only; private
 repositories need GitHub Code Security (formerly Advanced Security), which a personal Free
 plan does not have. For private callers pass `upload: false` (or `upload-sarif: false` to
@@ -244,7 +244,7 @@ Caller example (the Swift suite of an app that links a Rust library):
 ```yaml
 jobs:
   changes:
-    uses: pyrlyn/infra/.github/workflows/changes.yml@<sha> # main
+    uses: pyrlyn/ci/.github/workflows/changes.yml@<sha> # main
     permissions:
       contents: read
     with:
@@ -339,7 +339,7 @@ permissions:
 
 jobs:
   pipeline:
-    uses: pyrlyn/infra/.github/workflows/pipeline.yml@<sha> # main
+    uses: pyrlyn/ci/.github/workflows/pipeline.yml@<sha> # main
     permissions:
       contents: read
       security-events: write
@@ -364,7 +364,7 @@ recipes) sets `rust: false`, keeps its local `ci.yml`, and adds a local gate:
       && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
     runs-on: ubuntu-latest
     steps:
-      - uses: pyrlyn/infra/.github/actions/gate@<sha> # main
+      - uses: pyrlyn/ci/.github/actions/gate@<sha> # main
         with:
           needs: ${{ toJSON(needs) }}
 ```
@@ -396,7 +396,7 @@ call `notify-release-failure.yml` from a last job:
     permissions:
       actions: read
       issues: write
-    uses: pyrlyn/infra/.github/workflows/notify-release-failure.yml@<sha> # main
+    uses: pyrlyn/ci/.github/workflows/notify-release-failure.yml@<sha> # main
     with:
       ref: ${{ inputs.tag || github.ref_name }}
       needs: ${{ toJSON(needs) }}
@@ -487,7 +487,7 @@ jobs:
       contents: read
       issues: write
       security-events: read
-    uses: pyrlyn/infra/.github/workflows/warnings-to-issues.yml@<sha> # main
+    uses: pyrlyn/ci/.github/workflows/warnings-to-issues.yml@<sha> # main
     with:
       dry-run: ${{ inputs.dry-run || false }}
       sonar-project-key: listepo_rtok # the repository's sonar.projectKey; omit without Sonar
@@ -554,7 +554,7 @@ permissions:
   contents: read
 jobs:
   bump:
-    uses: pyrlyn/infra/.github/workflows/bump.yml@<sha> # main
+    uses: pyrlyn/ci/.github/workflows/bump.yml@<sha> # main
     permissions:
       contents: write
       pull-requests: write
@@ -604,7 +604,7 @@ permissions:
   contents: read
 jobs:
   release:
-    uses: pyrlyn/infra/.github/workflows/release.yml@<sha> # main
+    uses: pyrlyn/ci/.github/workflows/release.yml@<sha> # main
     permissions:
       contents: write
       checks: read
@@ -670,7 +670,7 @@ permissions:
   contents: read
 jobs:
   release:
-    uses: pyrlyn/infra/.github/workflows/release-apple-desktop.yml@<sha> # main
+    uses: pyrlyn/ci/.github/workflows/release-apple-desktop.yml@<sha> # main
     permissions:
       contents: write
       actions: read
@@ -747,7 +747,7 @@ jobs:
   automerge:
     needs: ci
     if: ${{ !cancelled() && github.actor == 'dependabot[bot]' }}
-    uses: pyrlyn/infra/.github/workflows/dependabot-automerge.yml@<sha> # main
+    uses: pyrlyn/ci/.github/workflows/dependabot-automerge.yml@<sha> # main
     permissions:
       contents: write
       pull-requests: write
@@ -781,7 +781,7 @@ unless `soft-fail: false`.
 ```yaml
 jobs:
   sonarcloud:
-    uses: pyrlyn/infra/.github/workflows/sonarcloud.yml@<sha> # main
+    uses: pyrlyn/ci/.github/workflows/sonarcloud.yml@<sha> # main
     permissions:
       contents: read
       pull-requests: read
@@ -818,7 +818,7 @@ requests").
       contents: write
       pull-requests: write
     steps:
-      - uses: pyrlyn/infra/.github/actions/revert-on-failure@<sha> # main
+      - uses: pyrlyn/ci/.github/actions/revert-on-failure@<sha> # main
 ```
 
 ## macos-sign (composite action)
@@ -841,7 +841,7 @@ Outputs: `identity`, `signed`, `notarized`. `release.yml` uses it (`macos-sign` 
 In a cargo-dist `build-setup.yml`:
 
 ```yaml
-- uses: pyrlyn/infra/.github/actions/macos-sign@<sha> # main
+- uses: pyrlyn/ci/.github/actions/macos-sign@<sha> # main
   if: runner.os == 'macOS'
   with:
     mode: discover
@@ -875,7 +875,7 @@ jobs:
     runs-on: xcode-27
     steps:
       - uses: actions/checkout@<sha> # v7.0.1
-      - uses: pyrlyn/infra/.github/actions/setup-xcode@<sha> # main
+      - uses: pyrlyn/ci/.github/actions/setup-xcode@<sha> # main
         with:
           version: "27"
 ```

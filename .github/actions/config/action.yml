@@ -1,7 +1,7 @@
 name: config
 description: >-
   Read ci.yml's configuration: infra defaults (defaults.yml next to this file), then
-  config/repos/<repository name>.yml in pyrlyn/infra at the pinned commit, then the caller's
+  config/repos/<repository name>.yml in pyrlyn/ci at the pinned commit, then the caller's
   own config file (default .github/infra.yml). Later files win key by key; lists are replaced.
   Emits `json` (normalized config: `<check>.run` booleans, input values), `jobs` (custom job
   matrix), `skip-ok` (checks the gate may see as skipped) and `docs-only` (this change is

@@ -211,7 +211,7 @@ def body_of(fp, w):
         lines.append(f"- Details: {w['url']}")
     lines += [
         "",
-        "Opened by pyrlyn/infra `warnings-to-issues`. It is closed automatically when the "
+        "Opened by pyrlyn/ci `warnings-to-issues`. It is closed automatically when the "
         "warning is fixed or dismissed at the source. Close it as *not planned* to stop "
         "tracking it.",
         "",

@@ -19,7 +19,7 @@ permissions:
 
 jobs:
   pages:
-    uses: pyrlyn/infra/.github/workflows/pages.yml@<SHA> # main
+    uses: pyrlyn/ci/.github/workflows/pages.yml@<SHA> # main
     permissions:
       contents: read
       pages: write

@@ -1,4 +1,4 @@
-# pyrlyn/infra
+# pyrlyn/ci
 
 Shared reusable GitHub workflows and build configs for pyrlyn repositories
 (rtok, ketch, stator, bindsmith, runa, cox).
@@ -46,7 +46,7 @@ for each consumer's thin callers.
 ```yaml
 jobs:
   pipeline:
-    uses: pyrlyn/infra/.github/workflows/pipeline.yml@<full commit sha>
+    uses: pyrlyn/ci/.github/workflows/pipeline.yml@<full commit sha>
     permissions:
       contents: read
       security-events: write

@@ -31,7 +31,7 @@ name: warnings-to-issues
 #         contents: read
 #         issues: write
 #         security-events: read
-#       uses: pyrlyn/infra/.github/workflows/warnings-to-issues.yml@<sha>
+#       uses: pyrlyn/ci/.github/workflows/warnings-to-issues.yml@<sha>
 #       with:
 #         dry-run: ${{ inputs.dry-run || false }}
 #

@@ -1,6 +1,6 @@
 # Consumers (2026-09-29)
 
-Repositories with Actions enabled that call pyrlyn/infra, and the infra commit they pin.
+Repositories with Actions enabled that call pyrlyn/ci, and the infra commit they pin.
 
 | Repository | Workflow -> infra workflow | Pin | Caller permissions |
 | --- | --- | --- | --- |

@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.85"
 license = "GPL-3.0-or-later"
 publish = false
-description = "Sync and check pyrlyn/infra's canonical license files in GPL repositories"
+description = "Sync and check pyrlyn/ci's canonical license files in GPL repositories"
 
 # Standalone: not a member of any other workspace in this repository.
 [workspace]

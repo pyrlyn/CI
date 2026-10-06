@@ -83,7 +83,7 @@ if [ "${DRY_RUN:-false}" = true ]; then
   exit 0
 fi
 cat >"$tmp/issue" <<BODY
-Tracking issue for the daily failure digest (pyrlyn/infra \`failure-digest.yml\`): every day
+Tracking issue for the daily failure digest (pyrlyn/ci \`failure-digest.yml\`): every day
 that something failed in ${repos[*]}, a comment here lists it and mentions @$WHO.
 Days without failures post nothing.
 BODY

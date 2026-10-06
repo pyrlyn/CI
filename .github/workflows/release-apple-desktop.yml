@@ -29,7 +29,7 @@ name: release-apple-desktop
 #         contents: write # the tag, its release and the appcast release
 #         actions: read   # notify-failure: failed job names
 #         issues: write   # notify-failure: the release-failure issue
-#       uses: pyrlyn/infra/.github/workflows/release-apple-desktop.yml@<sha>
+#       uses: pyrlyn/ci/.github/workflows/release-apple-desktop.yml@<sha>
 #       with:
 #         version: ${{ inputs.version }}
 #         working-directory: desktop/macos
