@@ -2,7 +2,8 @@ name: self-test
 
 # Runs ci-rust.yml against tests/fixtures/rust-crate through both toolchain paths: the
 # default shared matrix with Rust from mise.toml, and a one-entry matrix with an exact
-# rust-version (plus the MSRV job). `pipeline` runs the gated pipeline (ci-rust, CodeQL,
+# rust-version (plus the MSRV job), and `skip` (the shared matrix with no work, every target
+# on ubuntu-latest). `pipeline` runs the gated pipeline (ci-rust, CodeQL,
 # Semgrep, Snyk) on this repository. The extras run their safe paths: sonarcloud without a
 # token (skips), dependabot-automerge on a non-Dependabot PR (every job skips),
 # revert-on-failure as a dry run of this PR's commits, macos-sign without secrets (skips),
@@ -68,6 +69,19 @@ jobs:
       package-args: -p ci-rust-fixture-cli
       working-directory: tests/fixtures/rust-crate
       matrix: '[{"os": "ubuntu-latest", "target": "x86_64-unknown-linux-gnu"}]'
+
+  # `skip` over the shared four-target matrix: every target still reports under its name,
+  # and all of them run their no-op steps on `skip-runs-on` (ubuntu-latest), so no macOS
+  # (xcode-27), Windows or ARM runner is started.
+  skip:
+    name: skip
+    uses: ./.github/workflows/ci-rust.yml
+    permissions:
+      contents: read
+      actions: write # cancel-run on failure
+    with:
+      skip: true
+      working-directory: tests/fixtures/rust-crate
 
   pipeline:
     name: pipeline

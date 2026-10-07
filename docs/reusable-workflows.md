@@ -196,6 +196,7 @@ every job fails if `rustc --version` is not the pinned version.
 | `msrv-command` | `cargo check $PACKAGE_ARGS --all-targets $FEATURE_ARGS` | |
 | `changed-only` | `false` | no work (jobs still pass under their names) when no Rust file changed |
 | `skip` | `false` | no work (jobs still pass under their names) whatever changed, e.g. docs-only |
+| `skip-runs-on` | `ubuntu-latest` | runner of every matrix entry when there is no work (`""` = each entry's `os`) |
 | `full-package-args` | `--workspace` | replaces `package-args` when a Cargo.toml/Cargo.lock changed |
 | `fmt-runs-on`, `mise-install-args`, `cache-all-refs`, `timeout-minutes` | | |
 
@@ -209,7 +210,10 @@ a diff: schedule, workflow_dispatch, a `.github/` or `mise.toml` change) always 
 suite: `full-package-args` instead of `package-args`, and `changed-only` never skips it.
 `changed-only` is off by default because tests often read non-Rust files (docs, fixtures);
 when on, the matrix still expands and every step is a no-op, so required checks named after
-the targets report success instead of waiting.
+the targets report success instead of waiting. Without work (`skip`, or `changed-only` and no
+Rust change) every entry runs on `skip-runs-on` (`ubuntu-latest`) instead of its own `os`: the
+check names (`target`) stay, and a docs-only change starts no macOS (Xcode), Windows or ARM
+runner.
 
 ## Dependency-driven suite selection (`changes`)
 

@@ -26,6 +26,10 @@ name: ci-rust
 # or push without Rust changes turns the work into no-ops; the jobs still report success
 # under their usual names, so required checks never wait on a skipped matrix. `skip` does the
 # same unconditionally, e.g. for a docs-only pull request (the config action's `docs-only`).
+# Without work, every matrix entry runs on `skip-runs-on` (ubuntu-latest) instead of its own
+# runner, so a docs-only change never starts a macOS (Xcode), Windows or ARM runner; the
+# check names (`matrix.target`) stay the same. The matrix job itself is never skipped at job
+# level: that reports one check under the raw expression name and a required target waits.
 # Caller job permissions: contents: read, actions: write.
 on:
   workflow_call:
@@ -174,6 +178,15 @@ on:
         type: boolean
         required: false
         default: false
+      skip-runs-on:
+        description: >-
+          Runner label for every matrix entry when the jobs do no work (`skip`, or
+          `changed-only` without a Rust change): their steps are no-ops, so no macOS
+          (Xcode), Windows or ARM runner is started for them. The check names do not change.
+          Empty keeps each entry's own `os`.
+        type: string
+        required: false
+        default: ubuntu-latest
       full-package-args:
         description: >-
           Package selection used instead of `package-args` when a Cargo.toml or Cargo.lock
@@ -206,7 +219,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
-      matrix: ${{ steps.m.outputs.matrix }}
+      matrix: ${{ steps.runners.outputs.matrix }}
       run: ${{ steps.scope.outputs.run }}
       package-args: ${{ steps.scope.outputs.package-args }}
     steps:
@@ -245,6 +258,21 @@ jobs:
           elif [ "$run" = false ]; then
             echo "::notice title=ci-rust::no Rust file changed; fmt, clippy, tests and MSRV are no-ops"
           fi
+      # No work: every entry keeps its name (`target`) but runs its no-op steps on
+      # `skip-runs-on`, so a docs-only change queues no macOS, Windows or ARM runner.
+      - id: runners
+        env:
+          MATRIX: ${{ steps.m.outputs.matrix }}
+          RUN: ${{ steps.scope.outputs.run }}
+          SKIP_RUNS_ON: ${{ inputs.skip-runs-on }}
+        run: |
+          set -euo pipefail
+          m="$MATRIX"
+          if [ "$RUN" != true ] && [ -n "$SKIP_RUNS_ON" ]; then
+            m=$(jq -c --arg os "$SKIP_RUNS_ON" 'map(.os = $os)' <<<"$m")
+            echo "::notice title=ci-rust::no work; every matrix entry runs on $SKIP_RUNS_ON"
+          fi
+          echo "matrix=$m" >> "$GITHUB_OUTPUT"
       - name: Cancel the run on failure
         if: failure() && inputs.cancel-run-on-failure
         uses: $/.github/actions/cancel-run # nosemgrep: github-actions-mutable-action-tag
