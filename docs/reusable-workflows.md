@@ -20,6 +20,8 @@ repository. All third-party actions are pinned to full commit SHAs.
 | `release-apple-desktop.yml` | macOS app release: signed, notarised `.dmg`, Sparkle appcast, GitHub Release (production only) |
 | `notify-release-failure.yml` | open or update a `release-failure` issue for a failed release |
 | `warnings-to-issues.yml` | one issue per code scanning / SonarCloud warning; closed when the warning is gone |
+| `coderabbit-issues.yml` | one issue per actionable CodeRabbit inline review comment |
+| `release-ci-alert.yml` | failed checks on a release PR: comment with a mention, jobs, log tails |
 | `dependabot-automerge.yml` | merge allowed Dependabot updates after green CI; label/flag others |
 | `sonarcloud.yml` | SonarCloud scan (+ Rust LCOV coverage); skipped without `SONAR_TOKEN` |
 | `cla.yml` | Contributor License Agreement check (`pyrlyn/cla` action, off unless `CLA_ENABLED`), [cla.md](cla.md) |
@@ -40,6 +42,7 @@ Secrets (declared in each workflow's `on.workflow_call.secrets`):
 - `sonarcloud.yml`: `SONAR_TOKEN` (optional; every step skips without it).
 - `dependabot-automerge.yml`: none (uses `github.token`).
 - `warnings-to-issues.yml`: `SONAR_TOKEN` (optional; public SonarCloud projects need none).
+- `coderabbit-issues.yml`, `release-ci-alert.yml`: none (use `github.token`).
 - `cla.yml`: `CLA_APP_ID`, `CLA_APP_PRIVATE_KEY` (GitHub App `pyrlyn-cla`; or the fallback PAT
   `CLA_SIGNATURES_TOKEN`), all optional.
 
@@ -58,13 +61,16 @@ Secrets (declared in each workflow's `on.workflow_call.secrets`):
   `statuses: read`, `issues: write`.
 - `notify-release-failure.yml`: `actions: read`, `issues: write`.
 - `warnings-to-issues.yml`: `contents: read`, `issues: write`, `security-events: read`.
+- `coderabbit-issues.yml`: `issues: write`, `pull-requests: read`.
+- `release-ci-alert.yml`: `actions: read`, `contents: read`, `pull-requests: write`.
 - `dependabot-automerge.yml`: `contents: write`, `pull-requests: write`, `actions: read`.
 - `sonarcloud.yml`: `contents: read`, `pull-requests: read`, `actions: write`.
 - `cla.yml`: `contents: read`, `pull-requests: write`, `statuses: write`.
 
 `actions: write` is for cancel-on-failure: every job of every workflow above except
-`dependabot-automerge.yml`, `cla.yml` and `warnings-to-issues.yml` (one job that only
-reads results and writes issues) ends with the `cancel-run` action under `if: failure()`, so the first
+`dependabot-automerge.yml`, `cla.yml`, `warnings-to-issues.yml`, `coderabbit-issues.yml` and
+`release-ci-alert.yml` (one job each that only reads results and writes issues or comments)
+ends with the `cancel-run` action under `if: failure()`, so the first
 failing job (a test, clippy, fmt, CodeQL, Semgrep, Snyk, SonarCloud, a release step) cancels
 the whole run at once: every other running or queued job, the caller's own jobs included
 (`github.run_id` inside a reusable workflow is the caller's run). Matrices use
@@ -87,6 +93,8 @@ Composite actions (reference them as `pyrlyn/ci/.github/actions/<name>@<sha>`):
 | `cancel-run` | cancel the current workflow run (last step, `if: failure()`); `actions: write` |
 | `notify-release-failure` | `release-failure` issue (mention + assign) for a failed release run |
 | `warnings-to-issues` | sync code scanning / SonarCloud warnings with GitHub issues (the workflow's step) |
+| `coderabbit-issues` | CodeRabbit inline findings to GitHub issues (the workflow's step) |
+| `release-ci-alert` | comment on a release pull request whose CI failed (the workflow's step) |
 | `changes` | changed files by ecosystem: `rust`/`swift`/`dotnet`, `*_deps`, `*_full`, `*_present`; `docs_only` |
 
 Private repositories: no scans (CodeQL, Semgrep, Snyk, SonarCloud) by pyrlyn policy.
@@ -497,6 +505,111 @@ jobs:
 runs on its schedule or by hand. Start with a manual `dry-run` to see what the first live run
 would open. `self-test.yml` runs the offline test (`tests/warnings-to-issues/test.sh`) and a
 live dry run on this repository.
+
+## CodeRabbit findings as issues (`coderabbit-issues.yml`)
+
+CodeRabbit runs on demand and its findings should not get lost in a pull request's
+conversation, while its other comments stay quiet (the repositories' `.coderabbit.yaml` turns
+off the summary, walkthrough extras, review status, fortune and poem, and chat auto-replies).
+`coderabbit-issues.yml` (the `coderabbit-issues` action, `actions/github-script`) opens one
+issue per actionable inline review comment of a CodeRabbit review.
+
+- **Trigger**: the caller's `pull_request_review` (`submitted`) and, as a fallback,
+  `pull_request_review_comment` (`created`), gated on `coderabbitai[bot]` as the author, so
+  human reviews never start a runner. Either event covers every comment of that review.
+- **Skipped**: replies, summary and status comments, nitpicks, `[!WARNING]`-style notices,
+  `Warning:` notes, rate-limit and skipped-review notes. CodeRabbit's `⚠️ Potential issue` badge
+  is a finding, not a warning, and is kept. Comments in the review body (nitpicks, outside-diff
+  notes) are not filed.
+- **Issue**: title `CodeRabbit: <first line of the comment>`, the pull request link, file and
+  line(s) with a link to the comment, the commit, the comment body (no `@` mentions outside code
+  blocks, no HTML comments), label `coderabbit` (created when missing), assigned to `assignee`
+  (default `listepo`; empty assigns nobody).
+- **Dedupe**: a hidden `<!-- coderabbit-comment-id: N -->` marker; an issue with the label and
+  that marker (open or closed) means the comment is never filed again.
+- **Cap**: at most `max-create` (default 20) issues per run; `dry-run` only logs.
+- **Forks**: no secrets; on a fork's pull request the token is read-only, so the run logs a
+  warning instead of failing.
+
+Caller (`.github/workflows/coderabbit-issues.yml`):
+
+```yaml
+name: coderabbit-issues
+on:
+  pull_request_review:
+    types: [submitted]
+  pull_request_review_comment:
+    types: [created]
+concurrency:
+  group: coderabbit-issues-${{ github.event.pull_request.number }}-${{ github.event.sender.login }}
+  cancel-in-progress: false
+permissions: {}
+jobs:
+  issues:
+    if: >-
+      github.event.review.user.login == 'coderabbitai[bot]'
+      || github.event.comment.user.login == 'coderabbitai[bot]'
+    permissions:
+      issues: write
+      pull-requests: read
+    uses: pyrlyn/ci/.github/workflows/coderabbit-issues.yml@<sha> # main
+```
+
+`pull_request_review` runs the workflow file of the pull request's merge commit, so it works on
+pull requests opened before the caller landed once they are rebased or updated.
+
+## Release pull request CI alerts (`release-ci-alert.yml`)
+
+GitHub's Actions notifications cannot be filtered per pull request, so the maintainer keeps them
+off ([Release failure notifications](#release-failure-notifications)) and ordinary pull
+requests never notify about failed checks. A release pull request does: `release-ci-alert.yml`
+(the `release-ci-alert` action) runs from a `workflow_run` watcher of the repository's pull
+request workflows and comments on the pull request when it is a release pull request.
+
+- **Release pull request**: head branch `release-plz-*` (release-plz) or `release/bump-*`
+  (`bump.yml`), label `release`, or a title starting with `chore: release`, `chore(release)` or
+  `release: v`.
+- **Pull request of the run**: `workflow_run.pull_requests`, else every open pull request whose
+  head is the run's commit (fork pull requests included).
+- **Comment**: mentions `maintainer` (default `listepo`; the mention is the notification) and
+  lists the workflow run, the failed or timed-out jobs and steps with links, the number of jobs
+  cancelled after the failure, and the last `tail-lines` (default 30) log lines up to the last
+  error of up to five failed jobs. One comment per workflow and commit (hidden
+  `<!-- release-ci-alert: <workflow id>/<sha> -->` marker); a re-run that fails again updates
+  it, a new commit that fails gets a new comment.
+- Runs that are not pull request runs, did not fail, or belong to a pull request that is not a
+  release pull request post nothing (the caller's `if` keeps most of them from starting a
+  runner). Release workflows keep their `release-failure` issues.
+
+Caller (`.github/workflows/release-ci-alert.yml`; list the workflows that run on
+`pull_request`):
+
+```yaml
+name: release-ci-alert
+on:
+  workflow_run:
+    workflows: [pipeline, ci, license-check]
+    types: [completed]
+concurrency:
+  group: >-
+    ${{ github.workflow }}-${{ github.event.workflow_run.workflow_id }}-${{
+    github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+permissions: {}
+jobs:
+  alert:
+    if: >-
+      contains(fromJSON('["pull_request", "pull_request_target"]'),
+      github.event.workflow_run.event)
+      && contains(fromJSON('["failure", "timed_out"]'), github.event.workflow_run.conclusion)
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: write
+    uses: pyrlyn/ci/.github/workflows/release-ci-alert.yml@<sha> # main
+```
+
+`workflow_run` only fires for a workflow file on the default branch.
 
 ## bump.yml
 

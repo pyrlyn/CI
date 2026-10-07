@@ -1,0 +1,25 @@
+name: release-ci-alert
+description: >-
+  On a failed pull request workflow_run, comment on the pull request when it is a release pull
+  request (release-plz-* or release/bump-* head branch, release label, or a chore: release /
+  chore(release) / release: v title): mention, failed jobs and steps, log tails.
+inputs:
+  maintainer:
+    description: GitHub login mentioned in the comment.
+    required: false
+    default: listepo
+  tail-lines:
+    description: Log lines quoted per failed job (up to the last error line).
+    required: false
+    default: "30"
+runs:
+  using: composite
+  steps:
+    - name: Comment on a failed release pull request
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+      env:
+        MAINTAINER: ${{ inputs.maintainer }}
+        TAIL_LINES: ${{ inputs.tail-lines }}
+        SCRIPT_PATH: ${{ github.action_path }}/release-ci-alert.js
+      with:
+        script: await require(process.env.SCRIPT_PATH)({ github, context, core })
