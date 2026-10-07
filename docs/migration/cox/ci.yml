@@ -21,7 +21,7 @@ permissions:
 
 jobs:
   ci:
-    uses: pyrlyn/infra/.github/workflows/ci.yml@<SHA> # main
+    uses: pyrlyn/ci/.github/workflows/ci.yml@<SHA> # main
     permissions:
       contents: read
       security-events: write
@@ -34,7 +34,7 @@ jobs:
   revert-on-failure:
     needs: ci
     if: always() && needs.ci.result == 'failure'
-    uses: pyrlyn/infra/.github/workflows/revert-on-failure.yml@<SHA> # main
+    uses: pyrlyn/ci/.github/workflows/revert-on-failure.yml@<SHA> # main
     permissions:
       contents: write
       pull-requests: write

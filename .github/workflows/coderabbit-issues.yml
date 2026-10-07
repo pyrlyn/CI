@@ -1,0 +1,68 @@
+name: coderabbit-issues
+
+# Reusable "CodeRabbit findings as issues": one issue per actionable CodeRabbit inline review
+# comment (.github/actions/coderabbit-issues), labeled `coderabbit`, assigned to the maintainer,
+# deduped by a hidden `<!-- coderabbit-comment-id: N -->` marker. Nitpicks, warnings, notices,
+# summaries, status comments and replies are skipped. No secrets: on a fork's pull request the
+# token is read-only and the run only logs a warning.
+#
+# Caller (docs/reusable-workflows.md "CodeRabbit findings as issues"):
+#
+#   on:
+#     pull_request_review:
+#       types: [submitted]
+#     pull_request_review_comment:
+#       types: [created]
+#   jobs:
+#     issues:
+#       if: >-
+#         github.event.review.user.login == 'coderabbitai[bot]'
+#         || github.event.comment.user.login == 'coderabbitai[bot]'
+#       permissions:
+#         issues: write
+#         pull-requests: read
+#       uses: pyrlyn/ci/.github/workflows/coderabbit-issues.yml@<sha>
+#
+# Caller job permissions: issues: write, pull-requests: read.
+on:
+  workflow_call:
+    inputs:
+      label:
+        description: Issue label (created when missing); also the dedupe scope.
+        type: string
+        required: false
+        default: coderabbit
+      assignee:
+        description: GitHub login assigned to each issue; empty assigns nobody.
+        type: string
+        required: false
+        default: listepo
+      max-create:
+        description: Most issues opened per run; the rest are listed as deferred.
+        type: number
+        required: false
+        default: 20
+      dry-run:
+        description: Log the issues that would be opened; write nothing.
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  issues: write
+  pull-requests: read
+
+jobs:
+  issues:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+      pull-requests: read
+    steps:
+      - uses: $/.github/actions/coderabbit-issues # nosemgrep: github-actions-mutable-action-tag
+        with:
+          label: ${{ inputs.label }}
+          assignee: ${{ inputs.assignee }}
+          max-create: ${{ inputs.max-create }}
+          dry-run: ${{ inputs.dry-run }}

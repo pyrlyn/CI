@@ -24,7 +24,8 @@ name: ci-rust
 # Cargo.lock forces the full suite: `full-package-args` replaces `package-args`, and
 # `changed-only` cannot skip anything. With `changed-only` (off by default) a pull request
 # or push without Rust changes turns the work into no-ops; the jobs still report success
-# under their usual names, so required checks never wait on a skipped matrix.
+# under their usual names, so required checks never wait on a skipped matrix. `skip` does the
+# same unconditionally, e.g. for a docs-only pull request (the config action's `docs-only`).
 # Caller job permissions: contents: read, actions: write.
 on:
   workflow_call:
@@ -165,6 +166,14 @@ on:
         type: boolean
         required: false
         default: false
+      skip:
+        description: >-
+          Skip the work (not the check names) whatever changed, e.g. on a docs-only pull
+          request (`docs-only` from the config action). fmt and msrv report skipped, every
+          matrix job reports success.
+        type: boolean
+        required: false
+        default: false
       full-package-args:
         description: >-
           Package selection used instead of `package-args` when a Cargo.toml or Cargo.lock
@@ -215,6 +224,7 @@ jobs:
       - id: scope
         env:
           CHANGED_ONLY: ${{ inputs.changed-only }}
+          SKIP: ${{ inputs.skip }}
           FULL_PACKAGE_ARGS: ${{ inputs.full-package-args }}
           RUST: ${{ steps.changes.outputs.rust }}
           RUST_FULL: ${{ steps.changes.outputs.rust_full }}
@@ -222,6 +232,7 @@ jobs:
           set -euo pipefail
           run=true
           if [ "$CHANGED_ONLY" = true ] && [ "$RUST" != true ]; then run=false; fi
+          if [ "$SKIP" = true ]; then run=false; fi
           packages="$PACKAGE_ARGS"
           if [ "$RUST_FULL" = true ] && [ -n "$FULL_PACKAGE_ARGS" ]; then
             packages="$FULL_PACKAGE_ARGS"
@@ -229,7 +240,9 @@ jobs:
           echo "run=$run" >> "$GITHUB_OUTPUT"
           echo "package-args=$packages" >> "$GITHUB_OUTPUT"
           echo "work: $run; packages: ${packages:-<root package>}"
-          if [ "$run" = false ]; then
+          if [ "$SKIP" = true ]; then
+            echo "::notice title=ci-rust::skip is set; fmt, clippy, tests and MSRV are no-ops"
+          elif [ "$run" = false ]; then
             echo "::notice title=ci-rust::no Rust file changed; fmt, clippy, tests and MSRV are no-ops"
           fi
       - name: Cancel the run on failure
@@ -253,7 +266,7 @@ jobs:
           persist-credentials: false
 
       - if: inputs.rust-version == ''
-        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
         with:
           working_directory: ${{ inputs.working-directory }}
           install_args: ${{ inputs.mise-install-args }}
@@ -316,7 +329,7 @@ jobs:
 
       # Default path: the Rust version pinned in the caller's mise.toml.
       - if: env.RUN == 'true' && inputs.rust-version == ''
-        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
         with:
           working_directory: ${{ inputs.working-directory }}
           install_args: ${{ inputs.mise-install-args }}
@@ -368,7 +381,7 @@ jobs:
             || github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
 
       - if: env.RUN == 'true' && inputs.tools != ''
-        uses: taiki-e/install-action@dfae9bf3d6f6c6f20ef4ebb3486c01a51341ff12 # v2.87.18
+        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
           tool: ${{ inputs.tools }}
 

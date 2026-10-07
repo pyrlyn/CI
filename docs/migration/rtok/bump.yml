@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   bump:
-    uses: pyrlyn/infra/.github/workflows/bump.yml@<SHA> # main
+    uses: pyrlyn/ci/.github/workflows/bump.yml@<SHA> # main
     permissions:
       contents: write
       actions: write

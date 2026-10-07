@@ -1,6 +1,6 @@
 //! (5) CLA Assistant workflow: valid YAML that references the CLA document (CLA.md).
 //!
-//! The reusable CLA workflow (`.github/workflows/cla.yml`, pyrlyn/infra#21) is read from this
+//! The reusable CLA workflow (`.github/workflows/cla.yml`, pyrlyn/ci#21) is read from this
 //! checkout, otherwise from `origin/docs/cla` when that ref exists locally; without either the
 //! test skips with a message.
 

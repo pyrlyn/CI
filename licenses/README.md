@@ -1,6 +1,6 @@
 # Canonical license files
 
-pyrlyn/infra is the single source of truth for the license files of every GPL-licensed
+pyrlyn/ci is the single source of truth for the license files of every GPL-licensed
 pyrlyn repository:
 
 | File | What |
@@ -37,13 +37,13 @@ permissions:
   contents: read
 jobs:
   license:
-    uses: pyrlyn/infra/.github/workflows/license-check.yml@<full commit sha>
+    uses: pyrlyn/ci/.github/workflows/license-check.yml@<full commit sha>
     permissions:
       contents: read
       actions: write # cancel-run on failure
 ```
 
-Inputs: `canonical-ref` (pyrlyn/infra ref the canonical files are read from, default `main`),
+Inputs: `canonical-ref` (pyrlyn/ci ref the canonical files are read from, default `main`),
 `check-headers` (also require an `SPDX-License-Identifier` header in every tracked source
 file, default `false`), `header-exclude` (extra excluded paths, one per line),
 `cancel-run-on-failure` (default `true`).

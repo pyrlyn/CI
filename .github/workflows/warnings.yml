@@ -1,0 +1,38 @@
+name: warnings
+
+# This repository's own warnings as issues (warnings-to-issues.yml, the first consumer). Its
+# code scanning results on main come from self-test.yml (CodeQL `actions`, Semgrep); there is
+# no SonarCloud project for infra. Daily, after self-test on main, and by hand (dry run
+# available). One run at a time, so two runs never open the same issue twice.
+on:
+  schedule:
+    - cron: "30 6 * * *" # 09:30 Kyiv in summer, 08:30 in winter
+  workflow_run:
+    workflows: [self-test]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Print what would change instead of writing issues.
+        type: boolean
+        required: false
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  warnings:
+    name: warnings
+    uses: ./.github/workflows/warnings-to-issues.yml
+    permissions:
+      contents: read
+      issues: write
+      security-events: read
+    with:
+      dry-run: ${{ inputs.dry-run || false }}

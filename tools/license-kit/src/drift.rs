@@ -45,7 +45,7 @@ pub enum Status {
 impl Status {
     pub fn describe(self) -> &'static str {
         match self {
-            Status::Match => "matches pyrlyn/infra",
+            Status::Match => "matches pyrlyn/ci",
             Status::Missing => "missing",
             Status::Crlf => "CRLF line endings",
             Status::FinalNewline => "final newline differs",
@@ -101,7 +101,7 @@ pub fn report(items: &[Desired]) -> (String, bool) {
             .unified_diff()
             .header(
                 &format!("a/{} (this repository)", d.path),
-                &format!("b/{} (pyrlyn/infra)", d.path),
+                &format!("b/{} (pyrlyn/ci)", d.path),
             )
             .to_string();
         let diff: String = diff.chars().take(60_000).collect();
@@ -109,7 +109,7 @@ pub fn report(items: &[Desired]) -> (String, bool) {
     }
     if drift {
         s.push_str(
-            "\nThe canonical files live in pyrlyn/infra `licenses/`; update this repository's \
+            "\nThe canonical files live in pyrlyn/ci `licenses/`; update this repository's \
              copies from there (the `chore/license-sync` pull request does it).\n",
         );
     }

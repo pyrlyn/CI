@@ -7,8 +7,11 @@ name: self-test
 # token (skips), dependabot-automerge on a non-Dependabot PR (every job skips),
 # revert-on-failure as a dry run of this PR's commits, macos-sign without secrets (skips),
 # setup-xcode (Xcode 27 on xcode-27, a missing version fails, a no-op on Linux),
-# the changes action (table test plus a live run), ci-dotnet.yml without a .NET project (no-op),
-# failure-digest.sh against a fake gh.
+# the changes action (table test plus a live run, docs_only included), the config action's
+# docs-only switch (table test; the `ci` job runs it live), ci-dotnet.yml without a .NET
+# project (no-op),
+# failure-digest.sh against a fake gh, warnings-to-issues offline (fake gh and SonarCloud) and
+# as a live dry run on this repository's code scanning alerts (reads only, writes nothing).
 # A change to a reusable workflow or action is exercised before any caller pins it.
 on:
   pull_request:
@@ -164,6 +167,8 @@ jobs:
         with:
           persist-credentials: false
       - run: bash tests/changes/test.sh
+      # The config action's docs-only switch (normalize.py), offline.
+      - run: bash tests/config/test.sh
       - id: live
         uses: ./.github/actions/changes
       - name: Live outputs are booleans
@@ -189,6 +194,29 @@ jobs:
         with:
           persist-credentials: false
       - run: bash tests/failure-digest/test.sh
+
+  # warnings-to-issues: the script offline against a fake gh and a local fake SonarCloud.
+  warnings-to-issues-test:
+    name: warnings-to-issues (offline)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: bash tests/warnings-to-issues/test.sh
+
+  # The reusable workflow live, as a dry run: reads this repository's alerts and warning
+  # issues, prints the plan in the job summary, writes nothing.
+  warnings-to-issues:
+    name: warnings-to-issues (dry run)
+    uses: ./.github/workflows/warnings-to-issues.yml
+    permissions:
+      contents: read
+      issues: write
+      security-events: read
+    with:
+      dry-run: true
 
   # No .NET project here: the job must run, do nothing and pass.
   dotnet:

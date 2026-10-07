@@ -36,7 +36,7 @@ permissions:
 
 env:
   # The scanned repositories; all public, so the GITHUB_TOKEN reads their Actions runs.
-  DIGEST_REPOS: pyrlyn/infra pyrlyn/rtok pyrlyn/ketch pyrlyn/cox pyrlyn/runa
+  DIGEST_REPOS: pyrlyn/ci pyrlyn/rtok pyrlyn/ketch pyrlyn/cox pyrlyn/runa
 
 jobs:
   digest:

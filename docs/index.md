@@ -1,4 +1,4 @@
-# Using pyrlyn/infra
+# Using pyrlyn/ci
 
 ## ci-rust.yml
 
@@ -44,7 +44,7 @@ permissions:
 
 jobs:
   rust:
-    uses: pyrlyn/infra/.github/workflows/ci-rust.yml@<full commit sha>
+    uses: pyrlyn/ci/.github/workflows/ci-rust.yml@<full commit sha>
     with:
       # all optional
       # working-directory: .
@@ -95,7 +95,7 @@ they are passed explicitly or with `secrets: inherit`:
 ```yaml
 jobs:
   rust:
-    uses: pyrlyn/infra/.github/workflows/ci-rust.yml@<full commit sha>
+    uses: pyrlyn/ci/.github/workflows/ci-rust.yml@<full commit sha>
     secrets: inherit
 ```
 
@@ -110,7 +110,7 @@ token permissions; the called workflow cannot raise them.
 
 This repository is public, so any repository can call its workflows. The calling
 repository's Actions policy still applies to every action used inside the called workflow.
-With "only actions owned by listepo", `pyrlyn/infra` itself is allowed but the third-party
+With "only actions owned by listepo", `pyrlyn/ci` itself is allowed but the third-party
 actions it uses (`actions/checkout`, `jdx/mise-action`, `Swatinem/rust-cache`, `taiki-e/install-action`) are blocked.
 Such a repository needs "Allow actions created by GitHub" and these patterns allowed:
 

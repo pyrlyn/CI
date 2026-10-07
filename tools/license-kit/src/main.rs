@@ -11,7 +11,7 @@ use license_kit::config::Config;
 use license_kit::github::GhCli;
 use license_kit::{drift, headers, license, sync};
 
-/// Sync and check pyrlyn/infra's canonical license files in GPL repositories.
+/// Sync and check pyrlyn/ci's canonical license files in GPL repositories.
 #[derive(Parser)]
 #[command(version)]
 struct Cli {

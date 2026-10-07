@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   release-plz:
-    uses: pyrlyn/infra/.github/workflows/release-plz.yml@<SHA> # main
+    uses: pyrlyn/ci/.github/workflows/release-plz.yml@<SHA> # main
     permissions:
       contents: write
       pull-requests: write

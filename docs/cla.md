@@ -95,7 +95,7 @@ A dedicated **private repository `pyrlyn/cla-signatures`**, branch `main`, file
 `signatures/cla.json` (schema 1; the defaults of `cla.yml`).
 
 - The credential only needs write access to that one repository. Storing signatures on a branch
-  of `pyrlyn/infra` would need a credential that can push to infra, the repository every
+  of `pyrlyn/ci` would need a credential that can push to infra, the repository every
   workflow pin points into.
 - Signature commits stay out of the infra history and its pins, Dependabot and `sync-docs`.
 - One file for the whole organization: a contributor signs once for every repository.
@@ -166,7 +166,7 @@ permissions:
 
 jobs:
   cla:
-    uses: pyrlyn/infra/.github/workflows/cla.yml@<full commit sha>
+    uses: pyrlyn/ci/.github/workflows/cla.yml@<full commit sha>
     permissions:
       contents: read
       pull-requests: write
@@ -181,7 +181,7 @@ Pass secrets by name; do not use `secrets: inherit`. Existing callers that pass
 Inputs (all optional): `document-url`, `document-url-ru`, `document-sha256`, `cla-version`,
 `minimum-version`, `signatures-organization`, `signatures-repository`, `signatures-branch`,
 `signatures-path`, `allowlist` (bot logins ending in `[bot]` only; `*` wildcard),
-`lock-after-merge`. `pyrlyn/infra` itself runs `cla.yml` directly on its own pull requests.
+`lock-after-merge`. `pyrlyn/ci` itself runs `cla.yml` directly on its own pull requests.
 
 `pull_request_target` and `issue_comment` always run the workflow file of the **default
 branch**, so the check starts working only after the caller is merged. The workflow never checks

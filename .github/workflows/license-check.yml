@@ -1,11 +1,11 @@
 name: license-check
 
-# Fails when the caller's copies of the license files drift from pyrlyn/infra's canonical ones
+# Fails when the caller's copies of the license files drift from pyrlyn/ci's canonical ones
 # (licenses/, mapped per repository in licenses/targets.yml: the GPL-3.0 text, the commercial
 # license and the license-sync block of the README). The job summary shows a unified diff of
 # every drifted file. Comparison is byte-exact: CRLF line endings, a different final newline
 # and a missing file are drift. The canonical files and tools/license-kit (the checker) are
-# read from pyrlyn/infra at `canonical-ref` (default main, the branch the sync writes from),
+# read from pyrlyn/ci at `canonical-ref` (default main, the branch the sync writes from),
 # not from the pinned commit of this workflow, so a caller's pin never lags the sync PR.
 # Optionally (`check-headers`) every tracked source file must carry an
 # SPDX-License-Identifier header in its first 10 lines.
@@ -15,7 +15,7 @@ on:
   workflow_call:
     inputs:
       canonical-ref:
-        description: Ref of pyrlyn/infra to read licenses/ and tools/license-kit from.
+        description: Ref of pyrlyn/ci to read licenses/ and tools/license-kit from.
         type: string
         required: false
         default: main
@@ -62,7 +62,7 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: pyrlyn/infra
+          repository: pyrlyn/ci
           ref: ${{ inputs.canonical-ref || 'main' }}
           path: infra
           persist-credentials: false
@@ -75,7 +75,7 @@ jobs:
           shared-key: license-kit
       - name: Build license-kit
         run: cargo build --release --locked --manifest-path infra/tools/license-kit/Cargo.toml
-      - name: Compare with pyrlyn/infra's canonical license files
+      - name: Compare with pyrlyn/ci's canonical license files
         env:
           REPO: ${{ github.repository }}
           CHECK_HEADERS: ${{ inputs.check-headers && 'true' || 'false' }}

@@ -1,0 +1,62 @@
+name: release-ci-alert
+
+# Reusable "release pull request CI alert" (.github/actions/release-ci-alert). Ordinary pull
+# requests never notify about failed checks; a release pull request does: one comment per failed
+# workflow and commit (updated on a re-run) that mentions the maintainer and lists the failed
+# jobs and steps with links and the tail of each failed job's log.
+#
+# Release pull request: head branch `release-plz-*` or `release/bump-*`, label `release`, or a
+# title starting with `chore: release`, `chore(release)` or `release: v`.
+#
+# Caller: a `workflow_run` watcher of the repository's pull request workflows
+# (docs/reusable-workflows.md "Release pull request CI alerts"):
+#
+#   on:
+#     workflow_run:
+#       workflows: [pipeline, ci]
+#       types: [completed]
+#   jobs:
+#     alert:
+#       if: >-
+#         contains(fromJSON('["pull_request", "pull_request_target"]'),
+#         github.event.workflow_run.event)
+#         && contains(fromJSON('["failure", "timed_out"]'), github.event.workflow_run.conclusion)
+#       permissions:
+#         actions: read
+#         contents: read
+#         pull-requests: write
+#       uses: pyrlyn/ci/.github/workflows/release-ci-alert.yml@<sha>
+#
+# Caller job permissions: actions: read, contents: read, pull-requests: write.
+on:
+  workflow_call:
+    inputs:
+      maintainer:
+        description: GitHub login mentioned in the comment.
+        type: string
+        required: false
+        default: listepo
+      tail-lines:
+        description: Log lines quoted per failed job (up to the last error line).
+        type: number
+        required: false
+        default: 30
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: write
+
+jobs:
+  alert:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: $/.github/actions/release-ci-alert # nosemgrep: github-actions-mutable-action-tag
+        with:
+          maintainer: ${{ inputs.maintainer }}
+          tail-lines: ${{ inputs.tail-lines }}

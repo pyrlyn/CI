@@ -22,6 +22,9 @@ repository. All third-party actions are pinned to full commit SHAs.
 | `build-macos-dmg.yml` | release building block: macOS `.app` in a checked, Developer ID-signed (not notarised) `.dmg` artifact |
 | `publish-release.yml` | release building block: one GitHub release from all artifacts; `-test.N` tags become prereleases, never latest |
 | `notify-release-failure.yml` | open or update a `release-failure` issue for a failed release |
+| `warnings-to-issues.yml` | one issue per code scanning / SonarCloud warning; closed when the warning is gone |
+| `coderabbit-issues.yml` | one issue per actionable CodeRabbit inline review comment |
+| `release-ci-alert.yml` | failed checks on a release PR: comment with a mention, jobs, log tails |
 | `dependabot-automerge.yml` | merge allowed Dependabot updates after green CI; label/flag others |
 | `sonarcloud.yml` | SonarCloud scan (+ Rust LCOV coverage); skipped without `SONAR_TOKEN` |
 | `cla.yml` | Contributor License Agreement check (`pyrlyn/cla` action, off unless `CLA_ENABLED`), [cla.md](cla.md) |
@@ -44,6 +47,8 @@ Secrets (declared in each workflow's `on.workflow_call.secrets`):
 - `publish-release.yml`: none (uses `github.token`).
 - `sonarcloud.yml`: `SONAR_TOKEN` (optional; every step skips without it).
 - `dependabot-automerge.yml`: none (uses `github.token`).
+- `warnings-to-issues.yml`: `SONAR_TOKEN` (optional; public SonarCloud projects need none).
+- `coderabbit-issues.yml`, `release-ci-alert.yml`: none (use `github.token`).
 - `cla.yml`: `CLA_APP_ID`, `CLA_APP_PRIVATE_KEY` (GitHub App `pyrlyn-cla`; or the fallback PAT
   `CLA_SIGNATURES_TOKEN`), all optional.
 
@@ -63,12 +68,17 @@ Secrets (declared in each workflow's `on.workflow_call.secrets`):
 - `bump.yml`: `contents: write`, `pull-requests: write`, `actions: write`, `checks: read`,
   `statuses: read`, `issues: write`.
 - `notify-release-failure.yml`: `actions: read`, `issues: write`.
+- `warnings-to-issues.yml`: `contents: read`, `issues: write`, `security-events: read`.
+- `coderabbit-issues.yml`: `issues: write`, `pull-requests: read`.
+- `release-ci-alert.yml`: `actions: read`, `contents: read`, `pull-requests: write`.
 - `dependabot-automerge.yml`: `contents: write`, `pull-requests: write`, `actions: read`.
 - `sonarcloud.yml`: `contents: read`, `pull-requests: read`, `actions: write`.
 - `cla.yml`: `contents: read`, `pull-requests: write`, `statuses: write`.
 
 `actions: write` is for cancel-on-failure: every job of every workflow above except
-`dependabot-automerge.yml` and `cla.yml` ends with the `cancel-run` action under `if: failure()`, so the first
+`dependabot-automerge.yml`, `cla.yml`, `warnings-to-issues.yml`, `coderabbit-issues.yml` and
+`release-ci-alert.yml` (one job each that only reads results and writes issues or comments)
+ends with the `cancel-run` action under `if: failure()`, so the first
 failing job (a test, clippy, fmt, CodeQL, Semgrep, Snyk, SonarCloud, a release step) cancels
 the whole run at once: every other running or queued job, the caller's own jobs included
 (`github.run_id` inside a reusable workflow is the caller's run). Matrices use
@@ -80,7 +90,7 @@ that asks for more than its caller grants), even with the input off. Pass
 e.g. a Dependabot flow whose notify job reports a failed CI. `dependabot-automerge.yml` has no
 cancel step for the same reason: its `notify-failure` must run after `automerge` fails.
 
-Composite actions (reference them as `pyrlyn/infra/.github/actions/<name>@<sha>`):
+Composite actions (reference them as `pyrlyn/ci/.github/actions/<name>@<sha>`):
 
 | Action | Purpose |
 | --- | --- |
@@ -91,21 +101,24 @@ Composite actions (reference them as `pyrlyn/infra/.github/actions/<name>@<sha>`
 | `setup-xcode` | select the pinned Xcode (default 27) with `xcode-select`; fails when it is missing |
 | `cancel-run` | cancel the current workflow run (last step, `if: failure()`); `actions: write` |
 | `notify-release-failure` | `release-failure` issue (mention + assign) for a failed release run |
-| `changes` | changed files by ecosystem: `rust`/`swift`/`dotnet`, `*_deps`, `*_full`, `*_present` |
+| `warnings-to-issues` | sync code scanning / SonarCloud warnings with GitHub issues (the workflow's step) |
+| `coderabbit-issues` | CodeRabbit inline findings to GitHub issues (the workflow's step) |
+| `release-ci-alert` | comment on a release pull request whose CI failed (the workflow's step) |
+| `changes` | changed files by ecosystem: `rust`/`swift`/`dotnet`, `*_deps`, `*_full`, `*_present`; `docs_only` |
 
 Private repositories: no scans (CodeQL, Semgrep, Snyk, SonarCloud) by pyrlyn policy.
 
 ## Referencing and pinning
 
 ```yaml
-uses: pyrlyn/infra/.github/workflows/pipeline.yml@<full-sha> # main 2026-09-27
+uses: pyrlyn/ci/.github/workflows/pipeline.yml@<full-sha> # main 2026-09-27
 ```
 
 - Pin to a full commit SHA (optionally with a `# vX.Y.Z` comment once tags exist). Dependabot
   (`package-ecosystem: github-actions`) updates SHA-pinned reusable workflow refs like action
   refs, so the pin moves by pull request.
 - Inside this repository, workflows call each other with `$/.github/workflows/<file>` (GitHub's
-  self-repository syntax, July 2026): the nested call resolves to pyrlyn/infra at the commit
+  self-repository syntax, July 2026): the nested call resolves to pyrlyn/ci at the commit
   the caller pinned, never to the caller's repository and never to `main`.
 - GitHub limits (github.com): 10 levels of nesting, 50 unique reusable workflows per run.
   The deepest chain here is caller -> pipeline.yml -> ci-rust.yml (3 levels).
@@ -161,7 +174,7 @@ concurrency:
 
 ## Free plan and private repositories
 
-pyrlyn/infra is public, so any repository (public or private) can call it. Code scanning
+pyrlyn/ci is public, so any repository (public or private) can call it. Code scanning
 (uploading SARIF from CodeQL, Semgrep or Snyk) is free for public repositories only; private
 repositories need GitHub Code Security (formerly Advanced Security), which a personal Free
 plan does not have. For private callers pass `upload: false` (or `upload-sarif: false` to
@@ -191,6 +204,7 @@ every job fails if `rustc --version` is not the pinned version.
 | `msrv` | `""` | e.g. `1.85`; adds an `msrv` job |
 | `msrv-command` | `cargo check $PACKAGE_ARGS --all-targets $FEATURE_ARGS` | |
 | `changed-only` | `false` | no work (jobs still pass under their names) when no Rust file changed |
+| `skip` | `false` | no work (jobs still pass under their names) whatever changed, e.g. docs-only |
 | `full-package-args` | `--workspace` | replaces `package-args` when a Cargo.toml/Cargo.lock changed |
 | `fmt-runs-on`, `mise-install-args`, `cache-all-refs`, `timeout-minutes` | | |
 
@@ -225,6 +239,11 @@ one), `<eco>_present` (the tree has such a project; `changes.yml` exports it for
 repository-specific regexes (one per line) that count as that ecosystem, e.g. a script that
 builds the app.
 
+`docs_only` is `true` when there is a diff, nothing forced the run, and every changed file is
+documentation: `*.md` (any directory, any case) or a `docs-paths` regex, and no
+`not-docs-paths` regex (Markdown that is code: `include_str!`, shipped, run by tests). ci.yml
+uses it for `docs-only` (docs/config.md, "Docs-only changes").
+
 It fails open: an event without a diff, a `.github/`, `mise.toml` or `.tool-versions` change,
 300 or more changed files, or any API error sets `forced` and every `<eco>`/`<eco>_full` to
 `true`. So a broken classification runs more, never less.
@@ -242,7 +261,7 @@ Caller example (the Swift suite of an app that links a Rust library):
 ```yaml
 jobs:
   changes:
-    uses: pyrlyn/infra/.github/workflows/changes.yml@<sha> # main
+    uses: pyrlyn/ci/.github/workflows/changes.yml@<sha> # main
     permissions:
       contents: read
     with:
@@ -283,6 +302,9 @@ dependency change.
   (for `manual`), `queries` (`security-and-quality`), `config-file`, `runs-on`, `upload`.
   Keep the repository's CodeQL *default setup* off.
 - semgrep: `config` (`p/default`), `extra-args`, `fail-on-findings` (`false`), `upload`.
+  Results suppressed in source (`# nosemgrep: <rule>`) are removed from the SARIF before the
+  upload: Semgrep keeps them with a `suppressions` mark that code scanning ignores, so each
+  would otherwise stay an open alert (and become an issue through warnings-to-issues).
 - snyk: `args` (`--all-projects`), `monitor` (`true`), `upload`; secret `SNYK_TOKEN`.
   Snyk CLI does not test Cargo projects; it covers npm, pub, Go, Python, NuGet manifests.
 - Snyk is switched off org-wide (kept, not removed): `snyk.enabled: false` in ci.yml's
@@ -334,7 +356,7 @@ permissions:
 
 jobs:
   pipeline:
-    uses: pyrlyn/infra/.github/workflows/pipeline.yml@<sha> # main
+    uses: pyrlyn/ci/.github/workflows/pipeline.yml@<sha> # main
     permissions:
       contents: read
       security-events: write
@@ -359,7 +381,7 @@ recipes) sets `rust: false`, keeps its local `ci.yml`, and adds a local gate:
       && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
     runs-on: ubuntu-latest
     steps:
-      - uses: pyrlyn/infra/.github/actions/gate@<sha> # main
+      - uses: pyrlyn/ci/.github/actions/gate@<sha> # main
         with:
           needs: ${{ toJSON(needs) }}
 ```
@@ -391,7 +413,7 @@ call `notify-release-failure.yml` from a last job:
     permissions:
       actions: read
       issues: write
-    uses: pyrlyn/infra/.github/workflows/notify-release-failure.yml@<sha> # main
+    uses: pyrlyn/ci/.github/workflows/notify-release-failure.yml@<sha> # main
     with:
       ref: ${{ inputs.tag || github.ref_name }}
       needs: ${{ toJSON(needs) }}
@@ -401,6 +423,202 @@ A dist `release.yml` without `allow-dirty = ["ci"]` must not be edited (`dist pl
 separate `workflow_run` watcher calls it with `run-id`, `run-attempt`, `workflow`, `ref` and
 `sha` from `github.event.workflow_run` when `conclusion == 'failure'`. Ordinary CI never calls
 it.
+
+## Warnings as issues (`warnings-to-issues.yml`)
+
+Scans report warnings without failing CI (`semgrep.fail-on-findings: false`, CodeQL and
+Semgrep only upload SARIF, `sonarcloud.soft-fail`), so warnings pile up unseen in the Security
+tab and on SonarCloud. `warnings-to-issues.yml` (the `warnings-to-issues` action,
+`.github/actions/warnings-to-issues/warnings_to_issues.py`, Python stdlib + `gh`) turns each
+one into a GitHub issue in the caller's repository and closes it when it is gone. It runs on
+its own triggers, never inside CI, so it cannot fail a CI run.
+
+Sources:
+
+- **Code scanning**: open alerts on the default branch from every SARIF tool (CodeQL,
+  Semgrep OSS, Snyk, ...); `tools` narrows the list (e.g. `CodeQL`). A repository without
+  code scanning (HTTP 403/404) is skipped with a warning.
+- **SonarCloud**: unresolved issues of `sonar-project-key` (`api/issues/search`; public
+  projects are read without a token, a private one needs `SONAR_TOKEN`). Empty key = off.
+
+Rules:
+
+- **Severity set** (`severities`, default `warning,note,medium,low`: warnings, not errors).
+  A code scanning alert's effective severity is its security severity (critical, high,
+  medium, low) when the rule has one, else the rule severity (error, warning, note).
+  SonarCloud: BLOCKER = critical, CRITICAL = high, MAJOR = medium, MINOR = low, INFO = note.
+- **One issue per warning**, found again by the fingerprint hidden in its body:
+  `<!-- warning-fingerprint: code-scanning/<alert number> -->` (GitHub already merges results
+  into alerts by rule and location fingerprint, so the alert number is stable across runs and
+  line moves) or `<!-- warning-fingerprint: sonar/<project key>/<issue key> -->`. Issues are
+  looked up by the `label` (default `warning`); removing that label from an issue makes the
+  next run open a new one.
+- **Existing issue**: left as it is. When the warning moved (`<!-- warning-location: ... -->`
+  differs), one comment says where to, and the hidden location is updated
+  (`comment-on-change: false` turns that off).
+- **Warning gone** (alert fixed or dismissed, Sonar issue resolved): the open issue gets a
+  comment (`... is fixed`, `... is dismissed`, `... is resolved in SonarCloud`) and is closed
+  as completed. A source that could not be read completely closes nothing.
+- **Closed by hand**: *not planned* means "do not track" and the issue is never touched again;
+  *completed* while the warning is still (or again) there reopens it.
+- **Labels**: `warning`, the source (`code-scanning` or `sonar`) and `severity:<level>`,
+  created when missing (an existing label is kept as it is). Nobody is assigned.
+- **Cap**: at most `max-create` (default 20) issues opened or reopened per run, oldest alerts
+  first; the rest are listed as deferred and come in later runs, so a first run does not
+  flood the repository.
+- **Dry run** (`dry-run: true`): the plan (would create / comment / close / deferred) goes to
+  the log and the job summary; nothing is written, labels included.
+- Scanner text is untrusted: messages are flattened to one line, `@` cannot mention anyone
+  and `<!--`/`-->` cannot forge a marker.
+
+Inputs: `dry-run` (false), `severities`, `max-create` (20), `label` (`warning`),
+`code-scanning` (true), `tools` (all), `sonar-project-key` (off), `sonar-host`
+(`https://sonarcloud.io`), `sonar-branch` (main branch), `comment-on-change` (true).
+Outputs: `created`, `closed`, `deferred` (planned counts in a dry run).
+
+Caller (one file per repository, e.g. `.github/workflows/warnings.yml`; infra's own is the
+first consumer). One run at a time: two concurrent runs could open the same issue twice.
+
+```yaml
+name: warnings
+on:
+  schedule:
+    - cron: "30 6 * * *" # daily
+  workflow_run: # right after CI on main uploaded fresh SARIF
+    workflows: [pipeline] # the consumer's caller of ci.yml (pipeline.yml in pyrlyn repos)
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        type: boolean
+        default: false
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  warnings:
+    permissions:
+      contents: read
+      issues: write
+      security-events: read
+    uses: pyrlyn/ci/.github/workflows/warnings-to-issues.yml@<sha> # main
+    with:
+      dry-run: ${{ inputs.dry-run || false }}
+      sonar-project-key: listepo_rtok # the repository's sonar.projectKey; omit without Sonar
+```
+
+`workflow_run` only fires for a workflow file on the default branch, so a new caller first
+runs on its schedule or by hand. Start with a manual `dry-run` to see what the first live run
+would open. `self-test.yml` runs the offline test (`tests/warnings-to-issues/test.sh`) and a
+live dry run on this repository.
+
+## CodeRabbit findings as issues (`coderabbit-issues.yml`)
+
+CodeRabbit runs on demand and its findings should not get lost in a pull request's
+conversation, while its other comments stay quiet (the repositories' `.coderabbit.yaml` turns
+off the summary, walkthrough extras, review status, fortune and poem, and chat auto-replies).
+`coderabbit-issues.yml` (the `coderabbit-issues` action, `actions/github-script`) opens one
+issue per actionable inline review comment of a CodeRabbit review.
+
+- **Trigger**: the caller's `pull_request_review` (`submitted`) and, as a fallback,
+  `pull_request_review_comment` (`created`), gated on `coderabbitai[bot]` as the author, so
+  human reviews never start a runner. Either event covers every comment of that review.
+- **Skipped**: replies, summary and status comments, nitpicks, `[!WARNING]`-style notices,
+  `Warning:` notes, rate-limit and skipped-review notes. CodeRabbit's `⚠️ Potential issue` badge
+  is a finding, not a warning, and is kept. Comments in the review body (nitpicks, outside-diff
+  notes) are not filed.
+- **Issue**: title `CodeRabbit: <first line of the comment>`, the pull request link, file and
+  line(s) with a link to the comment, the commit, the comment body (no `@` mentions outside code
+  blocks, no HTML comments), label `coderabbit` (created when missing), assigned to `assignee`
+  (default `listepo`; empty assigns nobody).
+- **Dedupe**: a hidden `<!-- coderabbit-comment-id: N -->` marker; an issue with the label and
+  that marker (open or closed) means the comment is never filed again.
+- **Cap**: at most `max-create` (default 20) issues per run; `dry-run` only logs.
+- **Forks**: no secrets; on a fork's pull request the token is read-only, so the run logs a
+  warning instead of failing.
+
+Caller (`.github/workflows/coderabbit-issues.yml`):
+
+```yaml
+name: coderabbit-issues
+on:
+  pull_request_review:
+    types: [submitted]
+  pull_request_review_comment:
+    types: [created]
+concurrency:
+  group: coderabbit-issues-${{ github.event.pull_request.number }}-${{ github.event.sender.login }}
+  cancel-in-progress: false
+permissions: {}
+jobs:
+  issues:
+    if: >-
+      github.event.review.user.login == 'coderabbitai[bot]'
+      || github.event.comment.user.login == 'coderabbitai[bot]'
+    permissions:
+      issues: write
+      pull-requests: read
+    uses: pyrlyn/ci/.github/workflows/coderabbit-issues.yml@<sha> # main
+```
+
+`pull_request_review` runs the workflow file of the pull request's merge commit, so it works on
+pull requests opened before the caller landed once they are rebased or updated.
+
+## Release pull request CI alerts (`release-ci-alert.yml`)
+
+GitHub's Actions notifications cannot be filtered per pull request, so the maintainer keeps them
+off ([Release failure notifications](#release-failure-notifications)) and ordinary pull
+requests never notify about failed checks. A release pull request does: `release-ci-alert.yml`
+(the `release-ci-alert` action) runs from a `workflow_run` watcher of the repository's pull
+request workflows and comments on the pull request when it is a release pull request.
+
+- **Release pull request**: head branch `release-plz-*` (release-plz) or `release/bump-*`
+  (`bump.yml`), label `release`, or a title starting with `chore: release`, `chore(release)` or
+  `release: v`.
+- **Pull request of the run**: `workflow_run.pull_requests`, else every open pull request whose
+  head is the run's commit (fork pull requests included).
+- **Comment**: mentions `maintainer` (default `listepo`; the mention is the notification) and
+  lists the workflow run, the failed or timed-out jobs and steps with links, the number of jobs
+  cancelled after the failure, and the last `tail-lines` (default 30) log lines up to the last
+  error of up to five failed jobs. One comment per workflow and commit (hidden
+  `<!-- release-ci-alert: <workflow id>/<sha> -->` marker); a re-run that fails again updates
+  it, a new commit that fails gets a new comment.
+- Runs that are not pull request runs, did not fail, or belong to a pull request that is not a
+  release pull request post nothing (the caller's `if` keeps most of them from starting a
+  runner). Release workflows keep their `release-failure` issues.
+
+Caller (`.github/workflows/release-ci-alert.yml`; list the workflows that run on
+`pull_request`):
+
+```yaml
+name: release-ci-alert
+on:
+  workflow_run:
+    workflows: [pipeline, ci, license-check]
+    types: [completed]
+concurrency:
+  group: >-
+    ${{ github.workflow }}-${{ github.event.workflow_run.workflow_id }}-${{
+    github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+permissions: {}
+jobs:
+  alert:
+    if: >-
+      contains(fromJSON('["pull_request", "pull_request_target"]'),
+      github.event.workflow_run.event)
+      && contains(fromJSON('["failure", "timed_out"]'), github.event.workflow_run.conclusion)
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: write
+    uses: pyrlyn/ci/.github/workflows/release-ci-alert.yml@<sha> # main
+```
+
+`workflow_run` only fires for a workflow file on the default branch.
 
 ## bump.yml
 
@@ -458,7 +676,7 @@ permissions:
   contents: read
 jobs:
   bump:
-    uses: pyrlyn/infra/.github/workflows/bump.yml@<sha> # main
+    uses: pyrlyn/ci/.github/workflows/bump.yml@<sha> # main
     permissions:
       contents: write
       pull-requests: write
@@ -508,7 +726,7 @@ permissions:
   contents: read
 jobs:
   release:
-    uses: pyrlyn/infra/.github/workflows/release.yml@<sha> # main
+    uses: pyrlyn/ci/.github/workflows/release.yml@<sha> # main
     permissions:
       contents: write
       checks: read
@@ -574,7 +792,7 @@ permissions:
   contents: read
 jobs:
   release:
-    uses: pyrlyn/infra/.github/workflows/release-apple-desktop.yml@<sha> # main
+    uses: pyrlyn/ci/.github/workflows/release-apple-desktop.yml@<sha> # main
     permissions:
       contents: write
       actions: read
@@ -750,7 +968,7 @@ jobs:
   automerge:
     needs: ci
     if: ${{ !cancelled() && github.actor == 'dependabot[bot]' }}
-    uses: pyrlyn/infra/.github/workflows/dependabot-automerge.yml@<sha> # main
+    uses: pyrlyn/ci/.github/workflows/dependabot-automerge.yml@<sha> # main
     permissions:
       contents: write
       pull-requests: write
@@ -784,7 +1002,7 @@ unless `soft-fail: false`.
 ```yaml
 jobs:
   sonarcloud:
-    uses: pyrlyn/infra/.github/workflows/sonarcloud.yml@<sha> # main
+    uses: pyrlyn/ci/.github/workflows/sonarcloud.yml@<sha> # main
     permissions:
       contents: read
       pull-requests: read
@@ -821,7 +1039,7 @@ requests").
       contents: write
       pull-requests: write
     steps:
-      - uses: pyrlyn/infra/.github/actions/revert-on-failure@<sha> # main
+      - uses: pyrlyn/ci/.github/actions/revert-on-failure@<sha> # main
 ```
 
 ## macos-sign (composite action)
@@ -844,7 +1062,7 @@ Outputs: `identity`, `signed`, `notarized`. `release.yml` uses it (`macos-sign` 
 In a cargo-dist `build-setup.yml`:
 
 ```yaml
-- uses: pyrlyn/infra/.github/actions/macos-sign@<sha> # main
+- uses: pyrlyn/ci/.github/actions/macos-sign@<sha> # main
   if: runner.os == 'macOS'
   with:
     mode: discover
@@ -878,7 +1096,7 @@ jobs:
     runs-on: xcode-27
     steps:
       - uses: actions/checkout@<sha> # v7.0.1
-      - uses: pyrlyn/infra/.github/actions/setup-xcode@<sha> # main
+      - uses: pyrlyn/ci/.github/actions/setup-xcode@<sha> # main
         with:
           version: "27"
 ```

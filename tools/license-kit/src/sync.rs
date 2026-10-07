@@ -37,20 +37,20 @@ pub struct Outcome {
     pub action: Action,
 }
 
-pub const TITLE: &str = "chore(license): sync license files from pyrlyn/infra";
+pub const TITLE: &str = "chore(license): sync license files from pyrlyn/ci";
 
 fn body(changed: &[String], source: &str, draft: bool) -> String {
     let files: String = changed.iter().map(|f| format!("- `{f}`\n")).collect();
     let state = if draft {
         "Opened as a draft: mark it ready for review and merge it, or set `auto-merge: true` for \
-         this repository in pyrlyn/infra `licenses/targets.yml`."
+         this repository in pyrlyn/ci `licenses/targets.yml`."
     } else {
         "Auto-merge is enabled: it merges once the required checks pass."
     };
     format!(
-        "Automated update from pyrlyn/infra{source}: the canonical license files (`licenses/`) \
+        "Automated update from pyrlyn/ci{source}: the canonical license files (`licenses/`) \
          and the README license-sync block.\n\nFiles brought in line:\n{files}\n{state}\n\nThe \
-         branch is maintained by pyrlyn/infra's license-sync; edits here are overwritten.\n"
+         branch is maintained by pyrlyn/ci's license-sync; edits here are overwritten.\n"
     )
 }
 
