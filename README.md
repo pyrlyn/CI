@@ -27,6 +27,7 @@ Shared reusable GitHub workflows and build configs for pyrlyn repositories
 | [`warnings-to-issues.yml`](.github/workflows/warnings-to-issues.yml) | one issue per code scanning / SonarCloud warning (deduplicated, closed when fixed); infra's own caller is [`warnings.yml`](.github/workflows/warnings.yml) |
 | [`revert-on-failure.yml`](.github/workflows/revert-on-failure.yml) | revert a failed push to the default branch |
 | [`cla.yml`](.github/workflows/cla.yml) | Contributor License Agreement check (`pyrlyn/cla` action, off unless `CLA_ENABLED`); see [docs/cla.md](docs/cla.md) |
+| [`renovate.yml`](.github/workflows/renovate.yml) | self-hosted Renovate for the pyrlyn organization, mise only (`mise.toml`, `mise.lock`); config in [`renovate/`](renovate/); see [docs/renovate.md](docs/renovate.md) |
 
 Composite actions: [`gate`](.github/actions/gate/action.yml) (fail unless every needed job
 succeeded), [`revert-on-failure`](.github/actions/revert-on-failure/action.yml),
