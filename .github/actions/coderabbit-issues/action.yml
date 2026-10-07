@@ -1,0 +1,40 @@
+name: coderabbit-issues
+description: >-
+  One GitHub issue per actionable CodeRabbit inline review comment of the triggering review
+  (pull_request_review or pull_request_review_comment event). Skips nitpicks, warnings,
+  notices, summaries, status comments and replies; dedupes by a hidden comment-id marker.
+inputs:
+  bot:
+    description: Login of the CodeRabbit bot.
+    required: false
+    default: coderabbitai[bot]
+  label:
+    description: Issue label (created when missing); also the dedupe scope.
+    required: false
+    default: coderabbit
+  assignee:
+    description: GitHub login assigned to each issue; empty assigns nobody.
+    required: false
+    default: listepo
+  max-create:
+    description: Most issues opened per run; the rest are listed as deferred.
+    required: false
+    default: "20"
+  dry-run:
+    description: Log the issues that would be opened; write nothing.
+    required: false
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - name: File CodeRabbit findings as issues
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+      env:
+        BOT: ${{ inputs.bot }}
+        LABEL: ${{ inputs.label }}
+        ASSIGNEE: ${{ inputs.assignee }}
+        MAX_CREATE: ${{ inputs.max-create }}
+        DRY_RUN: ${{ inputs.dry-run }}
+        SCRIPT_PATH: ${{ github.action_path }}/coderabbit-issues.js
+      with:
+        script: await require(process.env.SCRIPT_PATH)({ github, context, core })
