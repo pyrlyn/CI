@@ -16,6 +16,7 @@ Shared reusable GitHub workflows and build configs for pyrlyn repositories
 | [`release-plz.yml`](.github/workflows/release-plz.yml) | release PR only (versions + changelog); never tags, releases or dispatches |
 | [`release.yml`](.github/workflows/release.yml) | release build on bump's tag: checks, verify, build, sign, smoke, upload, publish |
 | [`windows-sign.yml`](.github/workflows/windows-sign.yml) | sign a Windows build and pack an MSIX |
+| [`flatpak.yml`](.github/workflows/flatpak.yml) | build a Flatpak bundle from the caller's manifest |
 | [`dependabot-automerge.yml`](.github/workflows/dependabot-automerge.yml) | merge allowed Dependabot updates after green CI |
 | [`sonarcloud.yml`](.github/workflows/sonarcloud.yml) | SonarCloud scan, skipped without `SONAR_TOKEN` |
 | [`ci.yml`](.github/workflows/ci.yml) | **single entrypoint**: config-driven (`.github/infra.yml`) Rust CI, scans, SonarCloud, lint and repo-specific jobs behind a `gate` |

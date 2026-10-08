@@ -19,6 +19,7 @@ repository. All third-party actions are pinned to full commit SHAs.
 | `release.yml` | release build on bump's tag: checks, verify, build, sign/notarize, smoke, upload, publish |
 | `release-apple-desktop.yml` | macOS app release: signed, notarised `.dmg`, Sparkle appcast, GitHub Release (production only) |
 | `windows-sign.yml` | sign a Windows build and pack one MSIX (production only) |
+| `flatpak.yml` | build one Flatpak bundle from the caller's manifest |
 | `notify-release-failure.yml` | open or update a `release-failure` issue for a failed release |
 | `warnings-to-issues.yml` | one issue per code scanning / SonarCloud warning; closed when the warning is gone |
 | `coderabbit-issues.yml` | one issue per actionable CodeRabbit inline review comment |
@@ -42,6 +43,7 @@ Secrets (declared in each workflow's `on.workflow_call.secrets`):
   secrets, passed with `secrets: inherit`; a missing one stops the run before the build.
 - `windows-sign.yml`: `WINDOWS_CERTIFICATE`, `WINDOWS_CERTIFICATE_PWD`; a missing one stops the run
   before the layout is packed.
+- `flatpak.yml`: none.
 - `sonarcloud.yml`: `SONAR_TOKEN` (optional; every step skips without it).
 - `dependabot-automerge.yml`: none (uses `github.token`).
 - `warnings-to-issues.yml`: `SONAR_TOKEN` (optional; public SonarCloud projects need none).
@@ -61,6 +63,7 @@ Secrets (declared in each workflow's `on.workflow_call.secrets`):
   `issues: write`.
 - `release-apple-desktop.yml`: `contents: write`, `actions: read`, `issues: write`.
 - `windows-sign.yml`: `contents: read`, `actions: write`.
+- `flatpak.yml`: `contents: read`, `actions: write`.
 - `bump.yml`: `contents: write`, `pull-requests: write`, `actions: write`, `checks: read`,
   `statuses: read`, `issues: write`.
 - `notify-release-failure.yml`: `actions: read`, `issues: write`.
@@ -867,6 +870,40 @@ them, optionally installs the SDK and runs `build-command`, packs with the newes
 with `signtool verify /pa`, and uploads the MSIX as an artifact named after `output`. The
 `.pfx` is deleted before the step ends, including when signing fails. The password is not
 printed. Output: `package` (the file name).
+
+## flatpak.yml
+
+Builds one Flatpak from the caller's manifest and uploads the bundle. The manifest chooses the
+runtime; this workflow installs that SDK from `repo-url` (default Flathub) and does not sign
+the repository. Flathub submission stays in the app repository.
+
+```yaml
+jobs:
+  flatpak:
+    uses: pyrlyn/ci/.github/workflows/flatpak.yml@<sha> # main
+    permissions:
+      contents: read
+      actions: write
+    with:
+      manifest: desktop/linux/app.mailune.yml
+      app-id: app.mailune.Mailune
+```
+
+| Input | Default |
+| --- | --- |
+| `manifest` (required) | path relative to the repository root |
+| `app-id` (required) | application id for `flatpak build-bundle` |
+| `bundle` | `dist/app.flatpak` |
+| `arch` | `x86_64` |
+| `branch` | `""` (manifest default) |
+| `repo-url` | Flathub's `flathub.flatpakrepo` |
+| `runs-on` | `ubuntu-latest` |
+| `timeout-minutes` | `90` |
+| `cancel-run-on-failure` | `true` |
+
+`flatpak-builder` runs as the user with `--disable-rofiles-fuse` because the hosted runner has
+no FUSE device, and `--install-deps-from=flathub` so the SDK is the one the manifest names.
+Output: `bundle` (the relative path). The file is also uploaded as `flatpak-<arch>`.
 
 ## dependabot-automerge.yml
 
