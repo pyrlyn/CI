@@ -11,6 +11,7 @@ on:
       - LICENSE
       - .github/workflows/license-*.yml
       - .github/workflows/cla*.yml
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
     paths:
@@ -42,6 +43,7 @@ defaults:
 
 jobs:
   license-kit:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: license-kit
     runs-on: ubuntu-latest
     timeout-minutes: 15

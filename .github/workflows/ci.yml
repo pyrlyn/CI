@@ -76,6 +76,7 @@ jobs:
     uses: $/.github/workflows/ci-rust.yml
     with:
       cancel-run-on-failure: ${{ fromJSON(needs.config.outputs.json).cancel-run-on-failure }}
+      skip-drafts: ${{ fromJSON(needs.config.outputs.json).skip-drafts }}
       matrix: ${{ fromJSON(needs.config.outputs.json).rust.matrix-json }}
       rust-version: ${{ fromJSON(needs.config.outputs.json).rust.rust-version }}
       fmt-runs-on: ${{ fromJSON(needs.config.outputs.json).rust.fmt-runs-on }}
@@ -104,6 +105,7 @@ jobs:
     uses: $/.github/workflows/ci-dotnet.yml
     with:
       cancel-run-on-failure: ${{ fromJSON(needs.config.outputs.json).cancel-run-on-failure }}
+      skip-drafts: ${{ fromJSON(needs.config.outputs.json).skip-drafts }}
       dotnet-version: ${{ fromJSON(needs.config.outputs.json).dotnet.dotnet-version }}
       working-directory: ${{ fromJSON(needs.config.outputs.json).dotnet.working-directory }}
       test-command: ${{ fromJSON(needs.config.outputs.json).dotnet.test-command }}
@@ -121,6 +123,7 @@ jobs:
       actions: write
     with:
       cancel-run-on-failure: ${{ fromJSON(needs.config.outputs.json).cancel-run-on-failure }}
+      skip-drafts: ${{ fromJSON(needs.config.outputs.json).skip-drafts }}
       languages: ${{ fromJSON(needs.config.outputs.json).codeql.languages-json }}
       build-mode: ${{ fromJSON(needs.config.outputs.json).codeql.build-mode }}
       queries: ${{ fromJSON(needs.config.outputs.json).codeql.queries }}
@@ -139,6 +142,7 @@ jobs:
       actions: write
     with:
       cancel-run-on-failure: ${{ fromJSON(needs.config.outputs.json).cancel-run-on-failure }}
+      skip-drafts: ${{ fromJSON(needs.config.outputs.json).skip-drafts }}
       config: ${{ fromJSON(needs.config.outputs.json).semgrep.config }}
       extra-args: ${{ fromJSON(needs.config.outputs.json).semgrep.extra-args }}
       fail-on-findings: ${{ fromJSON(needs.config.outputs.json).semgrep.fail-on-findings }}
@@ -154,6 +158,7 @@ jobs:
       actions: write
     with:
       cancel-run-on-failure: ${{ fromJSON(needs.config.outputs.json).cancel-run-on-failure }}
+      skip-drafts: ${{ fromJSON(needs.config.outputs.json).skip-drafts }}
       args: ${{ fromJSON(needs.config.outputs.json).snyk.args }}
       monitor: ${{ fromJSON(needs.config.outputs.json).snyk.monitor }}
       upload: ${{ fromJSON(needs.config.outputs.json).upload-sarif }}
@@ -170,6 +175,7 @@ jobs:
       actions: write
     with:
       cancel-run-on-failure: ${{ fromJSON(needs.config.outputs.json).cancel-run-on-failure }}
+      skip-drafts: ${{ fromJSON(needs.config.outputs.json).skip-drafts }}
       organization: ${{ fromJSON(needs.config.outputs.json).sonarcloud.organization }}
       project-key: ${{ fromJSON(needs.config.outputs.json).sonarcloud.project-key }}
       args: ${{ fromJSON(needs.config.outputs.json).sonarcloud.args }}
@@ -190,6 +196,7 @@ jobs:
     uses: $/.github/workflows/lint.yml
     with:
       cancel-run-on-failure: ${{ fromJSON(needs.config.outputs.json).cancel-run-on-failure }}
+      skip-drafts: ${{ fromJSON(needs.config.outputs.json).skip-drafts }}
       actionlint-version: ${{ fromJSON(needs.config.outputs.json).lint.actionlint-version }}
       args: ${{ fromJSON(needs.config.outputs.json).lint.args }}
       extra-command: ${{ fromJSON(needs.config.outputs.json).lint.extra-command }}

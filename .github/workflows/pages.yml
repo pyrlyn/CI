@@ -11,6 +11,15 @@ name: pages
 on:
   workflow_call:
     inputs:
+      skip-drafts:
+        description: >-
+          Skip every job on a draft pull request: a job-level `if`, so no runner starts. The
+          caller's `pull_request` trigger must list `ready_for_review` in `types` so the run
+          starts when the draft is marked ready. false runs drafts like any other pull request
+          (ci.yml passes its `skip-drafts` config key).
+        type: boolean
+        required: false
+        default: true
       build-command:
         description: Bash that builds the site (run in working-directory).
         type: string
@@ -74,6 +83,10 @@ permissions:
 
 jobs:
   build:
+    # Draft pull requests (`skip-drafts`) skip `build`, and `deploy` with it.
+    if: >-
+      !inputs.skip-drafts
+      || github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: ${{ inputs.timeout-minutes }}
     defaults:

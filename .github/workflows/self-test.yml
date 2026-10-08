@@ -16,6 +16,7 @@ name: self-test
 # A change to a reusable workflow or action is exercised before any caller pins it.
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
 # Only the newest run per workflow and ref executes: a new push cancels the older queued or
@@ -36,6 +37,7 @@ permissions:
 
 jobs:
   mise:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: mise.toml
     uses: ./.github/workflows/ci-rust.yml
     permissions:
@@ -45,6 +47,7 @@ jobs:
       working-directory: tests/fixtures/rust-crate
 
   rust-version:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: rust-version
     uses: ./.github/workflows/ci-rust.yml
     permissions:
@@ -59,6 +62,7 @@ jobs:
   # Package selection override on the binary-only member: no library, so the doctest step
   # must skip with a notice instead of failing.
   no-lib:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: no-lib
     uses: ./.github/workflows/ci-rust.yml
     permissions:
@@ -74,6 +78,7 @@ jobs:
   # and all of them run their no-op steps on `skip-runs-on` (ubuntu-latest), so no macOS
   # (xcode-27), Windows or ARM runner is started.
   skip:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: skip
     uses: ./.github/workflows/ci-rust.yml
     permissions:
@@ -84,6 +89,7 @@ jobs:
       working-directory: tests/fixtures/rust-crate
 
   pipeline:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: pipeline
     uses: ./.github/workflows/pipeline.yml
     permissions:
@@ -107,6 +113,7 @@ jobs:
 
   # lint.yml through workflow_call: its called-path concurrency group (never cancels).
   lint:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: lint
     uses: ./.github/workflows/lint.yml
     permissions:
@@ -115,6 +122,7 @@ jobs:
 
   # The config-driven entrypoint with tests/fixtures/infra.yml.
   ci:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: ci
     uses: ./.github/workflows/ci.yml
     permissions:
@@ -126,6 +134,7 @@ jobs:
       config-file: tests/fixtures/infra.yml
 
   sonarcloud:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: sonarcloud
     uses: ./.github/workflows/sonarcloud.yml
     permissions:
@@ -139,6 +148,7 @@ jobs:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
   dependabot-automerge:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: dependabot-automerge
     uses: ./.github/workflows/dependabot-automerge.yml
     permissions:
@@ -150,6 +160,7 @@ jobs:
       wait-workflow: self-test.yml
 
   revert-on-failure:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: revert-on-failure (dry run)
     runs-on: ubuntu-latest
     steps:
@@ -173,6 +184,7 @@ jobs:
 
   # The changes action: the offline table test, then a live run on this event.
   changes:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: changes
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -200,6 +212,7 @@ jobs:
 
   # The daily failure digest and the shared issue script, offline against a fake gh.
   failure-digest:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: failure-digest
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -211,6 +224,7 @@ jobs:
 
   # warnings-to-issues: the script offline against a fake gh and a local fake SonarCloud.
   warnings-to-issues-test:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: warnings-to-issues (offline)
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -223,6 +237,7 @@ jobs:
   # The reusable workflow live, as a dry run: reads this repository's alerts and warning
   # issues, prints the plan in the job summary, writes nothing.
   warnings-to-issues:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: warnings-to-issues (dry run)
     uses: ./.github/workflows/warnings-to-issues.yml
     permissions:
@@ -234,6 +249,7 @@ jobs:
 
   # No .NET project here: the job must run, do nothing and pass.
   dotnet:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: dotnet (no project)
     uses: ./.github/workflows/ci-dotnet.yml
     permissions:
@@ -241,6 +257,7 @@ jobs:
       actions: write # cancel-run on failure
 
   macos-sign:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: macos-sign (no secrets)
     runs-on: xcode-27
     steps:
@@ -259,6 +276,7 @@ jobs:
         run: '[ "$SIGNED" = "false" ]'
 
   setup-xcode:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: setup-xcode (${{ matrix.os }})
     strategy:
       fail-fast: false
