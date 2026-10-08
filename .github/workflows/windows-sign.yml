@@ -1,0 +1,191 @@
+name: windows-sign
+
+# Reusable Windows release packaging. Packs one unpacked layout into an MSIX and signs that
+# package with the caller's certificate. Test builds must not call this: a missing certificate
+# stops the run before anything is packed. This file does not change a consumer's required
+# checks; a repository opts in with its own thin caller.
+#
+# Secrets (callers pass them with `secrets: inherit`). Checked before the layout is packed:
+#   WINDOWS_CERTIFICATE     - base64 Authenticode .pfx
+#   WINDOWS_CERTIFICATE_PWD - password of that .pfx
+#
+#   jobs:
+#     sign:
+#       permissions:
+#         contents: read
+#         actions: write # cancel-run
+#       uses: pyrlyn/ci/.github/workflows/windows-sign.yml@<sha>
+#       with:
+#         layout: desktop/windows/layout
+#         output: Mailune.msix
+#       secrets: inherit
+on:
+  workflow_call:
+    inputs:
+      layout:
+        description: >-
+          Unpacked package directory, relative to the repository root. Its root contains
+          AppxManifest.xml. One call packs one layout (a matrix covers x64 and arm64).
+        type: string
+        required: true
+      output:
+        description: Signed MSIX file name, written at the repository root. Not a path.
+        type: string
+        required: false
+        default: app.msix
+      build-command:
+        description: Bash from working-directory that produces the layout. Empty skips.
+        type: string
+        required: false
+        default: ""
+      working-directory:
+        description: Directory the build command runs in, relative to the repository root.
+        type: string
+        required: false
+        default: "."
+      dotnet-version:
+        description: SDK for actions/setup-dotnet (e.g. "10.0.x"). Empty skips.
+        type: string
+        required: false
+        default: ""
+      runs-on:
+        description: Windows runner label.
+        type: string
+        required: false
+        default: windows-latest
+      timeout-minutes:
+        description: Timeout of the signing job.
+        type: number
+        required: false
+        default: 60
+      cancel-run-on-failure:
+        description: >-
+          When the job fails, cancel the whole workflow run. The calling job must grant
+          `actions: write`.
+        type: boolean
+        required: false
+        default: true
+    secrets:
+      WINDOWS_CERTIFICATE:
+        description: Base64 Authenticode .pfx.
+        required: false
+      WINDOWS_CERTIFICATE_PWD:
+        description: Password of WINDOWS_CERTIFICATE.
+        required: false
+    outputs:
+      package:
+        description: Signed MSIX file name.
+        value: ${{ jobs.sign.outputs.package }}
+
+permissions:
+  contents: read
+  actions: write # cancel-run on failure
+
+jobs:
+  sign:
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    outputs:
+      package: ${{ steps.pack.outputs.package }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Names only. The values stay in the environment GitHub already masks.
+      - name: Check the secrets
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PWD: ${{ secrets.WINDOWS_CERTIFICATE_PWD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=""
+          [ -n "$WINDOWS_CERTIFICATE" ] || missing="$missing WINDOWS_CERTIFICATE"
+          [ -n "$WINDOWS_CERTIFICATE_PWD" ] || missing="$missing WINDOWS_CERTIFICATE_PWD"
+          if [ -n "$missing" ]; then
+            echo "missing secrets:$missing" >&2
+            echo "A Windows package is signed. Pass the organization secrets with" >&2
+            echo "'secrets: inherit'. Nothing was packed." >&2
+            exit 1
+          fi
+
+      - if: inputs.dotnet-version != ''
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: ${{ inputs.dotnet-version }}
+
+      - name: Build the layout
+        if: inputs.build-command != ''
+        working-directory: ${{ inputs.working-directory }}
+        shell: bash
+        env:
+          BUILD_COMMAND: ${{ inputs.build-command }}
+        run: |
+          set -euo pipefail
+          eval "$BUILD_COMMAND"
+
+      # The .pfx is written only for signtool and removed in the finally, including on failure.
+      # The password is an environment value, never echoed.
+      - name: Pack and sign the MSIX
+        id: pack
+        shell: pwsh
+        env:
+          LAYOUT: ${{ inputs.layout }}
+          OUTPUT_NAME: ${{ inputs.output }}
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PWD: ${{ secrets.WINDOWS_CERTIFICATE_PWD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:OUTPUT_NAME -notmatch '^[A-Za-z0-9._-]+\.msix$') {
+            Write-Error "output must be a single .msix file name"
+            exit 1
+          }
+          if ([string]::IsNullOrWhiteSpace($env:LAYOUT) -or $env:LAYOUT -match '\.\.' -or [IO.Path]::IsPathRooted($env:LAYOUT)) {
+            Write-Error "layout must be a relative path"
+            exit 1
+          }
+          $layout = Join-Path $env:GITHUB_WORKSPACE $env:LAYOUT
+          $manifest = Join-Path $layout 'AppxManifest.xml'
+          if (-not (Test-Path -LiteralPath $manifest)) {
+            Write-Error "no AppxManifest.xml in layout"
+            exit 1
+          }
+          $kits = 'C:\Program Files (x86)\Windows Kits\10\bin'
+          if (-not (Test-Path -LiteralPath $kits)) {
+            Write-Error "Windows SDK not found"
+            exit 1
+          }
+          $x64 = { $_.DirectoryName -match '\\x64$' }
+          $make = Get-ChildItem -Path $kits -Filter makeappx.exe -Recurse | Where-Object $x64 | Sort-Object FullName -Descending | Select-Object -First 1
+          $sign = Get-ChildItem -Path $kits -Filter signtool.exe -Recurse | Where-Object $x64 | Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $make -or -not $sign) {
+            Write-Error "makeappx or signtool missing from the Windows SDK"
+            exit 1
+          }
+          $out = Join-Path $env:GITHUB_WORKSPACE $env:OUTPUT_NAME
+          & $make.FullName pack /d $layout /p $out /o
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $cert = Join-Path $env:RUNNER_TEMP 'windows-sign.pfx'
+          try {
+            $bytes = [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE)
+            [IO.File]::WriteAllBytes($cert, $bytes)
+            # Microsoft's Authenticode timestamp service. The certificate bytes are not printed.
+            & $sign.FullName sign /fd SHA256 /td SHA256 /tr http://timestamp.acs.microsoft.com /f $cert /p $env:WINDOWS_CERTIFICATE_PWD $out
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & $sign.FullName verify /pa $out
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally {
+            Remove-Item -LiteralPath $cert -Force -ErrorAction SilentlyContinue
+          }
+          "package=$($env:OUTPUT_NAME)" >> $env:GITHUB_OUTPUT
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.pack.outputs.package }}
+          path: ${{ steps.pack.outputs.package }}
+          if-no-files-found: error
+
+      - name: Cancel the run on failure
+        if: failure() && inputs.cancel-run-on-failure
+        uses: $/.github/actions/cancel-run # nosemgrep: github-actions-mutable-action-tag

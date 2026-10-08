@@ -18,6 +18,7 @@ repository. All third-party actions are pinned to full commit SHAs.
 | `release-plz.yml` | release PR only; never tags, releases or dispatches (bump does) |
 | `release.yml` | release build on bump's tag: checks, verify, build, sign/notarize, smoke, upload, publish |
 | `release-apple-desktop.yml` | macOS app release: signed, notarised `.dmg`, Sparkle appcast, GitHub Release (production only) |
+| `windows-sign.yml` | sign a Windows build and pack one MSIX (production only) |
 | `notify-release-failure.yml` | open or update a `release-failure` issue for a failed release |
 | `warnings-to-issues.yml` | one issue per code scanning / SonarCloud warning; closed when the warning is gone |
 | `coderabbit-issues.yml` | one issue per actionable CodeRabbit inline review comment |
@@ -39,6 +40,8 @@ Secrets (declared in each workflow's `on.workflow_call.secrets`):
   `APPSTORE_CONNECT_KEY`, `APPSTORE_CONNECT_KEY_ID`, `APPSTORE_CONNECT_ISSUER_ID` (or `APPLE_ID`,
   `APPLE_TEAM_ID`, `APPLE_APP_PASSWORD`), `SPARKLE_ED_PRIVATE_KEY` (with `sparkle`); organization
   secrets, passed with `secrets: inherit`; a missing one stops the run before the build.
+- `windows-sign.yml`: `WINDOWS_CERTIFICATE`, `WINDOWS_CERTIFICATE_PWD`; a missing one stops the run
+  before the layout is packed.
 - `sonarcloud.yml`: `SONAR_TOKEN` (optional; every step skips without it).
 - `dependabot-automerge.yml`: none (uses `github.token`).
 - `warnings-to-issues.yml`: `SONAR_TOKEN` (optional; public SonarCloud projects need none).
@@ -57,6 +60,7 @@ Secrets (declared in each workflow's `on.workflow_call.secrets`):
 - `release.yml`: `contents: write` (Release assets), `checks: read`, `actions: write`,
   `issues: write`.
 - `release-apple-desktop.yml`: `contents: write`, `actions: read`, `issues: write`.
+- `windows-sign.yml`: `contents: read`, `actions: write`.
 - `bump.yml`: `contents: write`, `pull-requests: write`, `actions: write`, `checks: read`,
   `statuses: read`, `issues: write`.
 - `notify-release-failure.yml`: `actions: read`, `issues: write`.
@@ -826,6 +830,43 @@ Notarisation uses the App Store Connect API key, or the Apple ID trio when no ke
 
 A single job, so it does not end with `cancel-run`; `notify-failure` opens the
 `release-failure` issue as in release.yml (not for a dry run).
+
+## windows-sign.yml
+
+Production packaging of one Windows layout. Never call it for an unsigned test build: the
+certificate is required and a missing secret stops the run before `makeappx`. The caller owns
+the trigger (dispatch or a tag). This workflow does not register a required check.
+
+```yaml
+jobs:
+  sign:
+    uses: pyrlyn/ci/.github/workflows/windows-sign.yml@<sha> # main
+    permissions:
+      contents: read
+      actions: write
+    with:
+      layout: desktop/windows/layout
+      output: Mailune.msix
+    secrets: inherit
+```
+
+| Input | Default |
+| --- | --- |
+| `layout` (required) | directory with `AppxManifest.xml` at its root, relative to the repository |
+| `output` | `app.msix` (a file name, not a path) |
+| `build-command` | `""` (bash in `working-directory` that produces the layout) |
+| `working-directory` | `.` |
+| `dotnet-version` | `""` (skips `actions/setup-dotnet`) |
+| `runs-on` | `windows-latest` |
+| `timeout-minutes` | `60` |
+| `cancel-run-on-failure` | `true` |
+
+Secrets: `WINDOWS_CERTIFICATE` (base64 `.pfx`) and `WINDOWS_CERTIFICATE_PWD`. The job checks
+them, optionally installs the SDK and runs `build-command`, packs with the newest x64
+`makeappx` from the Windows SDK, signs with `signtool` (SHA256, Microsoft timestamp), verifies
+with `signtool verify /pa`, and uploads the MSIX as an artifact named after `output`. The
+`.pfx` is deleted before the step ends, including when signing fails. The password is not
+printed. Output: `package` (the file name).
 
 ## dependabot-automerge.yml
 
