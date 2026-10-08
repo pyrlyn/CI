@@ -7,9 +7,19 @@ name: lint
 # Caller job permissions: contents: read, actions: write (cancel-run).
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
   workflow_call:
     inputs:
+      skip-drafts:
+        description: >-
+          Skip every job on a draft pull request: a job-level `if`, so no runner starts. The
+          caller's `pull_request` trigger must list `ready_for_review` in `types` so the run
+          starts when the draft is marked ready. false runs drafts like any other pull request
+          (ci.yml passes its `skip-drafts` config key).
+        type: boolean
+        required: false
+        default: true
       cancel-run-on-failure:
         description: >-
           When a job fails, cancel the whole workflow run (every other running or queued
@@ -60,6 +70,11 @@ permissions:
 
 jobs:
   actionlint:
+    # `inputs.skip-drafts` is null outside workflow_call (this repository's own runs), and
+    # null == false in expressions, hence toJSON: only an explicit false runs a draft.
+    if: >-
+      toJSON(inputs.skip-drafts) == 'false'
+      || github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -69,7 +69,8 @@ def main():
     if unknown:
         fail(f"unknown top-level keys: {sorted(unknown)}")
 
-    skip_all = bool(cfg.get("skip-drafts", True)) and draft
+    cfg["skip-drafts"] = bool(cfg.get("skip-drafts", True))
+    skip_all = cfg["skip-drafts"] and draft
 
     docs = cfg.get("docs-only") or {}
     if not isinstance(docs, dict):

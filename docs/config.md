@@ -37,7 +37,8 @@ the same JSON.
 - A skipped required check counts as passed, so `gate` runs with `always()` and fails on any
   non-success except jobs listed in `skip-ok` (disabled by config or event filter). A failed
   `config` job fails the gate. On a draft PR with `skip-drafts`, the gate itself is skipped
-  (same as pipeline.yml).
+  (same as pipeline.yml). ci.yml also passes `skip-drafts` on to the workflows it calls, so
+  `skip-drafts: false` runs them on drafts (docs/reusable-workflows.md, "Draft pull requests").
 - Permissions are validated for every nested job up front, even disabled ones: the caller
   grants the union (`contents: read`, `security-events: write`, `pull-requests: read`,
   `actions: write`) regardless of what the config enables.

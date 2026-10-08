@@ -70,6 +70,17 @@ DRAFT=true check code-draft pull_request false . \
 DRAFT=true check docs-only-draft-no-skip-drafts pull_request true '."skip-drafts" = false' \
   docs-only=true draft-skip=false run:rust=false run:lint=true
 
+# ci.yml passes the merged `skip-drafts` to the reusable workflows' boolean `skip-drafts` input,
+# so the JSON always carries it as a boolean, default true.
+json_skip_drafts() { # <name> <jq patch> <expected>
+  local got
+  check "$1" pull_request false "$2" docs-only=false
+  got="$(sed -n 's/^json=//p' "$tmp/out" | jq -c '."skip-drafts"')"
+  [ "$got" = "$3" ] && echo "ok   $1 json" || { echo "FAIL $1: skip-drafts=$got, want $3"; fail=1; }
+}
+json_skip_drafts skip-drafts-default 'del(."skip-drafts")' true
+json_skip_drafts skip-drafts-off '."skip-drafts" = false' false
+
 # Bad config fails the job.
 : >"$tmp/out"
 if jq '."docs-only".typo = 1' <<<"$base" | EVENT=pull_request DOCS_ONLY=false \

@@ -163,6 +163,39 @@ concurrency:
   cancel-in-progress: false
 ```
 
+## Draft pull requests (`skip-drafts`)
+
+A draft pull request runs no CI; marking it ready for review runs everything as usual.
+
+- ci-rust, ci-dotnet, codeql, semgrep, snyk, sonarcloud, lint, license-check and pages take
+  `skip-drafts` (boolean, default `true`): on a draft `pull_request` their first job is skipped
+  at job level (`if:`), so no runner starts. ci-rust skips `plan` and with it every job that
+  needs it; pages skips `build` and `deploy`. Pass `skip-drafts: false` to run drafts.
+- ci.yml passes its `skip-drafts` config key ([config](config.md)) on to every workflow it
+  calls; pipeline.yml skips every job, the gate included, on a draft.
+- The caller's `pull_request` trigger lists `ready_for_review`, or marking a draft ready starts
+  no run and the checks of the last (skipped) draft run stay on the head commit:
+
+  ```yaml
+  on:
+    pull_request:
+      branches: [main]
+      types: [opened, synchronize, reopened, ready_for_review]
+  ```
+
+- The caller's own jobs on `pull_request` take the same guard:
+  `if: github.event_name != 'pull_request' || !github.event.pull_request.draft` (with `&&`
+  when the job has an `if` already). A job with `!cancelled()` or `always()` runs even when
+  the jobs it needs were skipped, so it needs the guard itself.
+- Required checks: a job skipped at job level counts as passed, while a skipped matrix job or a
+  skipped call of a reusable workflow reports one check under its raw name, so required checks
+  such as `rust / fmt` stay pending on a draft. Neither lets a draft through: GitHub does not
+  merge a draft, and `ready_for_review` runs the full set on the head commit before a merge.
+- Not skipped: `changes.yml` (a non-success reads as "unknown, run everything" in callers that
+  fail open, so skipping it would start their heavy jobs; the callers guard those jobs),
+  `pull_request_target` workflows (cla.yml), Dependabot flows (Dependabot never opens drafts)
+  and release workflows.
+
 ## Free plan and private repositories
 
 pyrlyn/ci is public, so any repository (public or private) can call it. Code scanning
