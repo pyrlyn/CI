@@ -14,6 +14,9 @@ base='{"version": 1, "skip-drafts": true, "upload-sarif": false,
   "codeql": {"enabled": true, "docs-only": false}, "semgrep": {"enabled": true, "docs-only": false},
   "snyk": {"enabled": false, "docs-only": false}, "sonarcloud": {"enabled": false, "docs-only": false},
   "lint": {"enabled": true, "docs-only": true},
+  "license": {"enabled": false, "docs-only": true},
+  "commits": {"enabled": false, "events": ["pull_request"], "docs-only": true, "tool": "grep",
+    "types": ["feat", "fix"]},
   "jobs": [{"name": "heavy", "run": "true"}, {"name": "docs", "run": "true", "docs-only": true}]}'
 
 check() { # <name> <event> <DOCS_ONLY> <jq patch> <expected key=value ...>
@@ -41,7 +44,7 @@ check() { # <name> <event> <DOCS_ONLY> <jq patch> <expected key=value ...>
 }
 
 check docs-only-pr pull_request true . \
-  docs-only=true "skip-ok=rust dotnet codeql semgrep snyk sonarcloud" \
+  docs-only=true "skip-ok=rust dotnet codeql semgrep snyk sonarcloud license commits" \
   run:rust=false run:codeql=false run:lint=true
 if grep -q '"name":"docs"' "$tmp/out" && ! grep -q '"name":"heavy"' "$tmp/out"; then
   echo "ok   docs-only-pr custom jobs"
@@ -50,23 +53,23 @@ else
   fail=1
 fi
 check code-pr pull_request false . \
-  docs-only=false "skip-ok=snyk sonarcloud" run:rust=true run:codeql=true
+  docs-only=false "skip-ok=snyk sonarcloud license commits" run:rust=true run:codeql=true
 check docs-only-push push true . docs-only=false run:rust=true
 check docs-only-disabled pull_request true '."docs-only".enabled = false' \
   docs-only=false run:codeql=true
 check no-docs-only-section pull_request true 'del(."docs-only")' docs-only=false run:rust=true
 check docs-only-custom-all-skipped pull_request true '.jobs = [{"name": "heavy", "run": "true"}]' \
-  docs-only=true "skip-ok=rust dotnet codeql semgrep snyk sonarcloud custom"
+  docs-only=true "skip-ok=rust dotnet codeql semgrep snyk sonarcloud license commits custom"
 
 # Draft PR with skip-drafts: every check is skipped (draft-skip), but `docs-only` still reports
 # the change, so a caller's local jobs can skip their heavy work on a docs-only draft too.
 DRAFT=true check docs-only-draft pull_request true . \
   docs-only=true draft-skip=true \
-  "skip-ok=rust dotnet codeql semgrep snyk sonarcloud lint custom" \
+  "skip-ok=rust dotnet codeql semgrep snyk sonarcloud lint license commits custom" \
   run:rust=false run:lint=false
 DRAFT=true check code-draft pull_request false . \
   docs-only=false draft-skip=true \
-  "skip-ok=rust dotnet codeql semgrep snyk sonarcloud lint custom" run:rust=false
+  "skip-ok=rust dotnet codeql semgrep snyk sonarcloud lint license commits custom" run:rust=false
 DRAFT=true check docs-only-draft-no-skip-drafts pull_request true '."skip-drafts" = false' \
   docs-only=true draft-skip=false run:rust=false run:lint=true
 
@@ -81,13 +84,35 @@ json_skip_drafts() { # <name> <jq patch> <expected>
 json_skip_drafts skip-drafts-default 'del(."skip-drafts")' true
 json_skip_drafts skip-drafts-off '."skip-drafts" = false' false
 
+# license and commits: on when enabled, both run on a docs-only change; commits only on
+# pull_request by default.
+on='.license.enabled = true | .commits.enabled = true'
+check toggles-docs-only-pr pull_request true "$on" run:license=true run:commits=true run:rust=false
+check toggles-push push false "$on" run:license=true run:commits=false
+json_field() { # <name> <jq patch> <jq path> <expected>
+  local got
+  check "$1" pull_request false "$2" docs-only=false
+  got="$(sed -n 's/^json=//p' "$tmp/out" | jq -c "$3")"
+  if [ "$got" = "$4" ]; then echo "ok   $1 json"; else echo "FAIL $1: $3=$got, want $4"; fail=1; fi
+}
+json_field commits-types "$on" '.commits."types-list"' '"feat fix"'
+json_field locked-default . '.rust.locked' '"auto"'
+json_field locked-bool '.rust.locked = false' '.rust.locked' '"false"'
+json_field base-exclude-allowed '."docs-only"."base-exclude" = []' '."docs-only"."base-exclude"' '[]'
+
 # Bad config fails the job.
-: >"$tmp/out"
-if jq '."docs-only".typo = 1' <<<"$base" | EVENT=pull_request DOCS_ONLY=false \
-    GITHUB_OUTPUT="$tmp/out" python3 "$script" >/dev/null 2>&1; then
-  echo "FAIL unknown docs-only key accepted"; fail=1
-else
-  echo "ok   unknown docs-only key"
-fi
+must_fail() { # <name> <jq patch>
+  : >"$tmp/out"
+  if jq "$2" <<<"$base" | EVENT=pull_request DOCS_ONLY=false \
+      GITHUB_OUTPUT="$tmp/out" python3 "$script" >/dev/null 2>&1; then
+    echo "FAIL $1 accepted"; fail=1
+  else
+    echo "ok   $1"
+  fi
+}
+must_fail "unknown docs-only key" '."docs-only".typo = 1'
+must_fail "unknown commits tool" '.commits.tool = "gitlint"'
+must_fail "bad commit type" '.commits.types = ["Feat"]'
+must_fail "bad rust.locked" '.rust.locked = "yes"'
 
 exit "$fail"

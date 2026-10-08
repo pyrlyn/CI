@@ -10,7 +10,9 @@ name: ci
 # by config). Repository-specific jobs (`jobs:` in the config) run as one matrix job. `gate`
 # runs with always() and fails on anything but success, except jobs the config turned off.
 # With `docs-only.enabled`, a pull request that changes documentation only turns off every
-# check and custom job without `docs-only: true` (lint by default); the gate still reports.
+# check and custom job without `docs-only: true` (lint, license and commits by default); the
+# gate still reports. `license` (license-check.yml) and `commits` (the commits action) are off
+# by default and replace a repository's own license-check.yml caller and commits job.
 #
 # Caller job permissions: contents: read, security-events: write (SARIF), pull-requests: read
 # (SonarCloud), actions: write (cancel-run). A caller granting less fails at startup even for
@@ -90,6 +92,7 @@ jobs:
       build-command: ${{ fromJSON(needs.config.outputs.json).rust.build-command }}
       package-args: ${{ fromJSON(needs.config.outputs.json).rust.package-args }}
       feature-args: ${{ fromJSON(needs.config.outputs.json).rust.feature-args }}
+      locked: ${{ fromJSON(needs.config.outputs.json).rust.locked }}
       msrv: ${{ fromJSON(needs.config.outputs.json).rust.msrv }}
       msrv-command: ${{ fromJSON(needs.config.outputs.json).rust.msrv-command }}
       timeout-minutes: ${{ fromJSON(needs.config.outputs.json).rust.timeout-minutes }}
@@ -198,8 +201,43 @@ jobs:
       cancel-run-on-failure: ${{ fromJSON(needs.config.outputs.json).cancel-run-on-failure }}
       skip-drafts: ${{ fromJSON(needs.config.outputs.json).skip-drafts }}
       actionlint-version: ${{ fromJSON(needs.config.outputs.json).lint.actionlint-version }}
+      ignore-generated: ${{ fromJSON(needs.config.outputs.json).lint.ignore-generated }}
       args: ${{ fromJSON(needs.config.outputs.json).lint.args }}
       extra-command: ${{ fromJSON(needs.config.outputs.json).lint.extra-command }}
+
+  # License files against pyrlyn/ci's canonical ones (licenses/targets.yml).
+  license:
+    needs: config
+    if: fromJSON(needs.config.outputs.json).license.run
+    uses: $/.github/workflows/license-check.yml
+    with:
+      cancel-run-on-failure: ${{ fromJSON(needs.config.outputs.json).cancel-run-on-failure }}
+      skip-drafts: ${{ fromJSON(needs.config.outputs.json).skip-drafts }}
+      canonical-ref: ${{ fromJSON(needs.config.outputs.json).license.canonical-ref }}
+      check-headers: ${{ fromJSON(needs.config.outputs.json).license.check-headers }}
+      header-exclude: ${{ fromJSON(needs.config.outputs.json).license.header-exclude }}
+
+  # A pull request's commit subjects must be Conventional Commits.
+  commits:
+    needs: config
+    if: fromJSON(needs.config.outputs.json).commits.run
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Full history: the range runs from the pull request's base branch to HEAD.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: $/.github/actions/commits # nosemgrep: github-actions-mutable-action-tag
+        with:
+          tool: ${{ fromJSON(needs.config.outputs.json).commits.tool }}
+          types: ${{ fromJSON(needs.config.outputs.json).commits.types-list }}
+      - name: Cancel the run on failure
+        if: >-
+          failure() && !cancelled()
+          && fromJSON(needs.config.outputs.json).cancel-run-on-failure
+        uses: $/.github/actions/cancel-run # nosemgrep: github-actions-mutable-action-tag
 
   # Repository-specific jobs from the config's `jobs:` list, one matrix entry each.
   custom:
@@ -269,7 +307,8 @@ jobs:
         uses: $/.github/actions/cancel-run # nosemgrep: github-actions-mutable-action-tag
 
   gate:
-    needs: [config, rust, dotnet, codeql, semgrep, snyk, sonarcloud, lint, custom]
+    needs:
+      [config, rust, dotnet, codeql, semgrep, snyk, sonarcloud, lint, license, commits, custom]
     # always(): also runs (and fails) after a cancel-run, so a required `ci / gate` is never
     # `skipped` (which counts as passed). Skipped on a draft PR when skip-drafts is on, like
     # pipeline.yml, so a draft never shows a green gate. A failed `config` fails the gate.

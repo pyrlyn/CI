@@ -85,8 +85,11 @@ runs:
             and (($d.events // []) as $ev | ($ev | length) == 0 or ($ev | any(. == $e)))' \
             <<<"$merged" >/dev/null; then
           changes_out="$(mktemp)"
+          # `base-exclude` (README, CHANGELOG) applies on top of the repository's `exclude`.
+          not_docs="$(jq -r '(."docs-only" | (.exclude // []) + (."base-exclude" // []))[]' \
+            <<<"$merged")"
           DOCS_PATHS="$(jq -r '(."docs-only".paths // [])[]' <<<"$merged")" \
-            NOT_DOCS_PATHS="$(jq -r '(."docs-only".exclude // [])[]' <<<"$merged")" \
+            NOT_DOCS_PATHS="$not_docs" \
             EVENT="$EVENT" GITHUB_OUTPUT="$changes_out" \
             bash "$ACTION_PATH/../changes/changes.sh"
           DOCS_ONLY="$(sed -n 's/^docs_only=//p' "$changes_out")"

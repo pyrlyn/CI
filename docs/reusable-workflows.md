@@ -9,7 +9,7 @@ repository. All third-party actions are pinned to full commit SHAs.
 | `ci-rust.yml` | fmt, clippy, check, tests on a shared OS/target matrix, optional MSRV |
 | `ci-dotnet.yml` | `dotnet test` for every solution; a passing no-op until a .NET project exists |
 | `changes.yml` | classify changed files by ecosystem (Rust, Swift, .NET) for suite selection |
-| `lint.yml` | actionlint (+ shellcheck) on the caller's workflows |
+| `lint.yml` | actionlint (+ shellcheck) on the caller's workflows; cargo-dist's generated `release.yml` is skipped (`ignore-generated`) |
 | `codeql.yml` | CodeQL per language, SARIF to code scanning |
 | `semgrep.yml` | Semgrep OSS (`p/default`), SARIF to code scanning |
 | `snyk.yml` | Snyk Open Source; off by default (switch), skipped without a token |
@@ -91,6 +91,8 @@ Composite actions (reference them as `pyrlyn/ci/.github/actions/<name>@<sha>`):
 | `macos-sign` | Developer ID codesign (or identity discovery for cargo-dist) + notarization |
 | `setup-xcode` | select the pinned Xcode (default 27) with `xcode-select`; fails when it is missing |
 | `cancel-run` | cancel the current workflow run (last step, `if: failure()`); `actions: write` |
+| `setup-rust` | Rust from the caller's mise.toml as the active toolchain; fails on any other rustc |
+| `commits` | Conventional Commits subjects of a pull request's commits (grep or commitlint) |
 | `notify-release-failure` | `release-failure` issue (mention + assign) for a failed release run |
 | `warnings-to-issues` | sync code scanning / SonarCloud warnings with GitHub issues (the workflow's step) |
 | `coderabbit-issues` | CodeRabbit inline findings to GitHub issues (the workflow's step) |
@@ -220,11 +222,12 @@ every job fails if `rustc --version` is not the pinned version.
 | `package-args` | `--workspace` | packages for every cargo command (`-p x`; `""` = root only) |
 | `feature-args` | `--all-features` | used by clippy, check, test, doctests, build, MSRV |
 | `clippy-args` | `""` | extra args before `--` for clippy and check |
+| `locked` | `auto` | `--locked` (`LOCKED_ARGS`) for clippy, check, doctests and the default test/build commands; auto = the workspace has a Cargo.lock |
 | `tools` | `""` | taiki-e/install-action tools (e.g. `nextest`) |
 | `setup-command` | `""` | bash before clippy (system packages) |
-| `test-command` | `cargo test $PACKAGE_ARGS --all-targets $FEATURE_ARGS` | native targets only |
+| `test-command` | `cargo test $PACKAGE_ARGS --all-targets $FEATURE_ARGS $LOCKED_ARGS` | native targets only |
 | `doc-tests` | `true` | `cargo test $PACKAGE_ARGS --doc $FEATURE_ARGS`; no lib: skipped |
-| `build-command` | `cargo build $PACKAGE_ARGS --all-targets $FEATURE_ARGS --target "$TARGET"` | |
+| `build-command` | `cargo build $PACKAGE_ARGS --all-targets $FEATURE_ARGS $LOCKED_ARGS --target "$TARGET"` | |
 | `msrv` | `""` | e.g. `1.85`; adds an `msrv` job |
 | `msrv-command` | `cargo check $PACKAGE_ARGS --all-targets $FEATURE_ARGS` | |
 | `changed-only` | `false` | no work (jobs still pass under their names) when no Rust file changed |
@@ -684,7 +687,9 @@ GitHub limits it designs around:
   It never merges (its owner may be a bypass actor). Without it, `GITHUB_TOKEN` opens the PR
   and `ci-workflows` lists the workflows to dispatch on the branch (each needs
   `workflow_dispatch`; check run names, e.g. `pipeline / gate` for a reusable call, are the
-  same for a dispatched run).
+  same for a dispatched run). Empty `ci-workflows` means `ci.yml` and `pipeline.yml`, each
+  that exists and has `workflow_dispatch`; empty `release-script` (without
+  `release-plz-update`) means `scripts/release.sh` when the repository has it.
 - The repository must allow rebase merging (`allow_rebase_merge`), and the ruleset's
   `pull_request` rule must list `rebase` in `allowed_merge_methods`.
 
@@ -889,23 +894,25 @@ concurrency:
   group: dependabot-pr-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 jobs:
-  ci:
-    if: github.actor == 'dependabot[bot]'
-    uses: ./.github/workflows/ci.yml
-    permissions:
-      contents: read
   automerge:
-    needs: ci
-    if: ${{ !cancelled() && github.actor == 'dependabot[bot]' }}
+    if: >-
+      github.actor == 'dependabot[bot]'
+      && github.event.pull_request.user.login == 'dependabot[bot]'
+      && github.event.pull_request.head.repo.full_name == github.repository
     uses: pyrlyn/ci/.github/workflows/dependabot-automerge.yml@<sha> # main
     permissions:
       contents: write
       pull-requests: write
       actions: read
     with:
-      ci-result: ${{ needs.ci.result }}
-      wait-workflow: pipeline.yml
+      ci-result: success # the real gate is wait-workflow
+      wait-workflow: ci.yml # the workflow that reports the required checks
 ```
+
+Do not call the repository's CI (`uses: ./.github/workflows/ci.yml`) from this workflow: the
+Dependabot pull request already runs it through its own `pull_request` trigger, so the call is
+a second full CI run on the same commit. `wait-workflow` waits for that run and refuses to
+merge unless it is green (docs/migration/_common/dependabot.yml is the caller to copy).
 
 The repository must allow squash merges (the default method) and, for the review label, the
 token needs `pull-requests: write`.
@@ -999,6 +1006,47 @@ In a cargo-dist `build-setup.yml`:
     certificate-password: ${{ secrets.MACOS_CERTIFICATE_PWD }}
     require: "true"
 ```
+
+## setup-rust (composite action)
+
+The Rust of the caller's `mise.toml` for a repository's own jobs (FFI builds, packaging,
+platform tests): `jdx/mise-action` installs it, `RUSTUP_TOOLCHAIN` makes it the active
+toolchain for every later rustup/cargo call, and the step fails when `rustc` is anything else
+(e.g. the runner image's stable). The same steps ci-rust.yml runs before clippy. Replaces the
+per-repository `.github/actions/rust` copies.
+
+| Input | Default | Notes |
+| --- | --- | --- |
+| `install-args` | `rust` | `mise install` arguments; must include `rust` (e.g. `rust node`) |
+| `working-directory` | `.` | directory with the mise.toml |
+| `targets` | `""` | extra rustup targets, space-separated |
+| `components` | `""` | extra rustup components, space-separated |
+| `cache` | `"false"` | `"true"` adds Swatinem/rust-cache (saved on the default branch) |
+| `cache-key` | `""` | extra rust-cache key |
+
+Output: `version` (the pinned rustc version).
+
+```yaml
+      - uses: actions/checkout@<sha> # v7.0.1
+      - uses: pyrlyn/ci/.github/actions/setup-rust@<sha> # main
+        with:
+          targets: wasm32-unknown-unknown
+```
+
+## commits (composite action)
+
+Conventional Commits subjects of a pull request's commits, from the base branch to HEAD: merge
+commits and git's own `Revert "..."` subjects are skipped, every offender is listed as an
+`::error::` before the step fails. Outside `pull_request` there is no range: a notice, success.
+Needs a checkout with `fetch-depth: 0`. ci.yml runs it as the `commits` check
+(`commits: {enabled: true}` in infra.yml); a repository whose ruleset requires a check named
+`commits` calls the action from its own `commits` job instead, so the name stays.
+
+| Input | Default | Notes |
+| --- | --- | --- |
+| `tool` | `grep` | `grep`: `type(scope)!: subject` with `types`; `commitlint`: the repository's commitlint config (`npm ci`, Node from mise.toml) |
+| `types` | `feat fix docs ci test chore style refactor perf build` | space-separated, `grep` only |
+| `working-directory` | `.` | package.json and the commitlint config (`commitlint` only) |
 
 ## setup-xcode (composite action)
 

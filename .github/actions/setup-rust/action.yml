@@ -1,0 +1,73 @@
+name: setup-rust
+description: >-
+  Install the Rust that the caller's mise.toml pins (the single source of the Rust version)
+  through jdx/mise-action, make it the active toolchain for every later rustup/cargo call
+  (RUSTUP_TOOLCHAIN), and fail when rustc is anything else, e.g. the runner image's own
+  stable. The same steps ci-rust.yml runs before clippy and the tests; for a caller's own jobs
+  (FFI builds, packaging, platform tests) that need the pinned Rust. Optional extra rustup
+  targets and components, and Swatinem/rust-cache.
+inputs:
+  install-args:
+    description: Tools mise installs from mise.toml (`mise install <args>`). Must include rust.
+    required: false
+    default: rust
+  working-directory:
+    description: Directory with the mise.toml.
+    required: false
+    default: "."
+  targets:
+    description: Space-separated extra rustup targets, e.g. "wasm32-unknown-unknown".
+    required: false
+    default: ""
+  components:
+    description: Space-separated extra rustup components, e.g. "llvm-tools-preview".
+    required: false
+    default: ""
+  cache:
+    description: '"true" adds Swatinem/rust-cache (saved on the default branch only).'
+    required: false
+    default: "false"
+  cache-key:
+    description: Extra rust-cache key, e.g. the job name, when jobs build different things.
+    required: false
+    default: ""
+outputs:
+  version:
+    description: The pinned Rust version (rustc), e.g. 1.98.1.
+    value: ${{ steps.pin.outputs.version }}
+runs:
+  using: composite
+  steps:
+    - uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
+      with:
+        working_directory: ${{ inputs.working-directory }}
+        install_args: ${{ inputs.install-args }}
+    - id: pin
+      name: rustc is the mise.toml pin
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        TARGETS: ${{ inputs.targets }}
+        COMPONENTS: ${{ inputs.components }}
+      run: |
+        set -euo pipefail
+        version="$(mise current rust)"
+        [ -n "$version" ] || { echo "::error::mise.toml pins no rust version"; exit 1; }
+        echo "RUSTUP_TOOLCHAIN=$version" >> "$GITHUB_ENV"
+        export RUSTUP_TOOLCHAIN="$version"
+        # TARGETS and COMPONENTS are split on whitespace on purpose.
+        # shellcheck disable=SC2086
+        if [ -n "$TARGETS" ]; then rustup target add $TARGETS; fi
+        # shellcheck disable=SC2086
+        if [ -n "$COMPONENTS" ]; then rustup component add $COMPONENTS; fi
+        rustc --version
+        rustc --version | grep -q "^rustc $version " \
+          || { echo "::error::rustc is not the mise.toml pin $version"; exit 1; }
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+    - if: inputs.cache == 'true'
+      uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      with:
+        workspaces: ${{ inputs.working-directory }} -> target
+        key: ${{ inputs.cache-key }}
+        save-if: >-
+          ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}

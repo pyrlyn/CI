@@ -9,7 +9,8 @@ import os
 import re
 import sys
 
-CHECKS = ["rust", "dotnet", "codeql", "semgrep", "snyk", "sonarcloud", "lint"]
+CHECKS = ["rust", "dotnet", "codeql", "semgrep", "snyk", "sonarcloud", "lint", "license",
+          "commits"]
 JOB_DEFAULTS = {
     "enabled": True,
     "events": [],
@@ -28,7 +29,8 @@ JOB_DEFAULTS = {
     "allow-failure": False,
     "docs-only": False,
 }
-DOCS_ONLY_KEYS = {"enabled", "events", "paths", "exclude"}
+DOCS_ONLY_KEYS = {"enabled", "events", "paths", "exclude", "base-exclude"}
+COMMIT_TOOLS = ("grep", "commitlint")
 KNOWN_JOB_KEYS = set(JOB_DEFAULTS) | {"name", "run"}
 
 
@@ -80,7 +82,7 @@ def main():
         fail(f"docs-only: unknown keys {sorted(extra)}")
     if not isinstance(docs.get("enabled", False), bool):
         fail("docs-only.enabled must be true or false")
-    for key in ("paths", "exclude"):
+    for key in ("paths", "exclude", "base-exclude"):
         if not isinstance(docs.get(key) or [], list):
             fail(f"docs-only.{key} must be a list of regexes")
     # Independent of skip_all: a caller's local jobs read `docs-only` on a draft PR too (their own
@@ -107,6 +109,23 @@ def main():
     # Inputs of type string that take JSON.
     rust = cfg["rust"]
     rust["matrix-json"] = json.dumps(rust.get("matrix") or []) if rust.get("matrix") else ""
+    locked = rust.get("locked", "auto")
+    if isinstance(locked, bool):
+        locked = "true" if locked else "false"
+    if locked not in ("auto", "true", "false"):
+        fail(f"rust.locked: expected true, false or auto, got {locked!r}")
+    rust["locked"] = locked
+
+    commits = cfg["commits"]
+    tool = commits.get("tool", "grep")
+    if tool not in COMMIT_TOOLS:
+        fail(f"commits.tool: expected one of {list(COMMIT_TOOLS)}, got {tool!r}")
+    types = commits.get("types") or []
+    if not isinstance(types, list) or not all(
+            isinstance(t, str) and re.fullmatch(r"[a-z][a-z0-9-]*", t) for t in types):
+        fail("commits.types must be a list of lowercase commit types")
+    commits["tool"] = tool
+    commits["types-list"] = " ".join(types)
     cfg["codeql"]["languages-json"] = json.dumps(cfg["codeql"].get("languages") or ["actions"])
 
     jobs = []
