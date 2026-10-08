@@ -20,6 +20,7 @@ repository. All third-party actions are pinned to full commit SHAs.
 | `release-apple-desktop.yml` | macOS app release: signed, notarised `.dmg`, Sparkle appcast, GitHub Release (production only) |
 | `windows-sign.yml` | sign a Windows build and pack one MSIX (production only) |
 | `flatpak.yml` | build one Flatpak bundle from the caller's manifest |
+| `testflight.yml` | upload an iOS IPA to TestFlight; a pull request does not upload |
 | `notify-release-failure.yml` | open or update a `release-failure` issue for a failed release |
 | `warnings-to-issues.yml` | one issue per code scanning / SonarCloud warning; closed when the warning is gone |
 | `coderabbit-issues.yml` | one issue per actionable CodeRabbit inline review comment |
@@ -44,6 +45,8 @@ Secrets (declared in each workflow's `on.workflow_call.secrets`):
 - `windows-sign.yml`: `WINDOWS_CERTIFICATE`, `WINDOWS_CERTIFICATE_PWD`; a missing one stops the run
   before the layout is packed.
 - `flatpak.yml`: none.
+- `testflight.yml`: `MACOS_CERTIFICATE`, `MACOS_CERTIFICATE_PWD` (macos-sign), `APPSTORE_CONNECT_KEY`,
+  `APPSTORE_CONNECT_KEY_ID`, `APPSTORE_CONNECT_ISSUER_ID`. A pull request does not upload.
 - `sonarcloud.yml`: `SONAR_TOKEN` (optional; every step skips without it).
 - `dependabot-automerge.yml`: none (uses `github.token`).
 - `warnings-to-issues.yml`: `SONAR_TOKEN` (optional; public SonarCloud projects need none).
@@ -64,6 +67,7 @@ Secrets (declared in each workflow's `on.workflow_call.secrets`):
 - `release-apple-desktop.yml`: `contents: write`, `actions: read`, `issues: write`.
 - `windows-sign.yml`: `contents: read`, `actions: write`.
 - `flatpak.yml`: `contents: read`, `actions: write`.
+- `testflight.yml`: `contents: read`, `actions: write`.
 - `bump.yml`: `contents: write`, `pull-requests: write`, `actions: write`, `checks: read`,
   `statuses: read`, `issues: write`.
 - `notify-release-failure.yml`: `actions: read`, `issues: write`.
@@ -904,6 +908,42 @@ jobs:
 `flatpak-builder` runs as the user with `--disable-rofiles-fuse` because the hosted runner has
 no FUSE device, and `--install-deps-from=flathub` so the SDK is the one the manifest names.
 Output: `bundle` (the relative path). The file is also uploaded as `flatpak-<arch>`.
+
+## testflight.yml
+
+Uploads one signed IPA to TestFlight. The certificate check is the `macos-sign` action in
+`discover` mode (the same `.p12` import as the other Apple workflows). The upload uses that
+action's App Store Connect API key (`APPSTORE_CONNECT_KEY`, key id, issuer) with `altool`.
+
+A pull request does not upload. The gate treats `pull_request` and `pull_request_target` as
+skip, and the upload step exits if it is ever reached on those events. `build-command` still
+runs, so a caller can compile on a pull request without sending a build.
+
+```yaml
+jobs:
+  testflight:
+    uses: pyrlyn/ci/.github/workflows/testflight.yml@<sha> # main
+    permissions:
+      contents: read
+      actions: write
+    with:
+      ipa: build/Mailune.ipa
+      build-command: xcodebuild -scheme Mailune -destination 'generic/platform=iOS' build
+    secrets: inherit
+```
+
+| Input | Default |
+| --- | --- |
+| `ipa` (required) | path relative to the repository root |
+| `working-directory` | `.` |
+| `build-command` | `""` |
+| `runs-on` | `macos-26` |
+| `xcode-version` | `""` (image default; otherwise `setup-xcode`) |
+| `timeout-minutes` | `90` |
+| `cancel-run-on-failure` | `true` |
+
+The `.p8` is written to `~/private_keys` for `altool` and removed when the step ends. The key
+bytes are not printed.
 
 ## dependabot-automerge.yml
 
