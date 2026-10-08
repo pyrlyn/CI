@@ -21,6 +21,7 @@ repository. All third-party actions are pinned to full commit SHAs.
 | `windows-sign.yml` | sign a Windows build and pack one MSIX (production only) |
 | `flatpak.yml` | build one Flatpak bundle from the caller's manifest |
 | `testflight.yml` | upload an iOS IPA to TestFlight; a pull request does not upload |
+| `play.yml` | upload a signed Android App Bundle; a pull request does not upload |
 | `notify-release-failure.yml` | open or update a `release-failure` issue for a failed release |
 | `warnings-to-issues.yml` | one issue per code scanning / SonarCloud warning; closed when the warning is gone |
 | `coderabbit-issues.yml` | one issue per actionable CodeRabbit inline review comment |
@@ -47,6 +48,7 @@ Secrets (declared in each workflow's `on.workflow_call.secrets`):
 - `flatpak.yml`: none.
 - `testflight.yml`: `MACOS_CERTIFICATE`, `MACOS_CERTIFICATE_PWD` (macos-sign), `APPSTORE_CONNECT_KEY`,
   `APPSTORE_CONNECT_KEY_ID`, `APPSTORE_CONNECT_ISSUER_ID`. A pull request does not upload.
+- `play.yml`: `PLAY_SERVICE_ACCOUNT_JSON`. A pull request does not upload.
 - `sonarcloud.yml`: `SONAR_TOKEN` (optional; every step skips without it).
 - `dependabot-automerge.yml`: none (uses `github.token`).
 - `warnings-to-issues.yml`: `SONAR_TOKEN` (optional; public SonarCloud projects need none).
@@ -68,6 +70,7 @@ Secrets (declared in each workflow's `on.workflow_call.secrets`):
 - `windows-sign.yml`: `contents: read`, `actions: write`.
 - `flatpak.yml`: `contents: read`, `actions: write`.
 - `testflight.yml`: `contents: read`, `actions: write`.
+- `play.yml`: `contents: read`, `actions: write`.
 - `bump.yml`: `contents: write`, `pull-requests: write`, `actions: write`, `checks: read`,
   `statuses: read`, `issues: write`.
 - `notify-release-failure.yml`: `actions: read`, `issues: write`.
@@ -944,6 +947,40 @@ jobs:
 
 The `.p8` is written to `~/private_keys` for `altool` and removed when the step ends. The key
 bytes are not printed.
+
+## play.yml
+
+Uploads one signed Android App Bundle to Google Play. The caller signs the bundle. This
+workflow checks the JAR signature with `jarsigner -verify -strict` and then uploads with
+`r0adkll/upload-google-play` (pinned). The service-account JSON is a secret and is not printed.
+
+A pull request does not upload. `pull_request` and `pull_request_target` skip the check and
+the upload.
+
+```yaml
+jobs:
+  play:
+    uses: pyrlyn/ci/.github/workflows/play.yml@<sha> # main
+    permissions:
+      contents: read
+      actions: write
+    with:
+      aab: app/build/outputs/bundle/release/app-release.aab
+      package-name: app.mailune
+      track: internal
+    secrets: inherit
+```
+
+| Input | Default |
+| --- | --- |
+| `aab` (required) | path of the signed bundle, relative to the repository |
+| `package-name` (required) | Android application id |
+| `track` | `internal` (`alpha`, `beta`, `production`) |
+| `status` | `completed` (`draft`, `inProgress`, `halted`) |
+| `changes-not-sent-for-review` | `false` |
+| `runs-on` | `ubuntu-latest` |
+| `timeout-minutes` | `30` |
+| `cancel-run-on-failure` | `true` |
 
 ## dependabot-automerge.yml
 
