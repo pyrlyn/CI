@@ -14,7 +14,8 @@ name: bump
 #            landed is read back (`mergeCommit`), and must have the tested tree and the base
 #            the branch was cut from as its parent.
 #   tag      the tag on THAT commit (git refs API), then the GitHub Release (a draft by
-#            default: cargo-dist with `create-release = false` uploads to it and undrafts it),
+#            default: cargo-dist with `create-release = false` uploads to it and undrafts it;
+#            a prerelease when the caller sets `prerelease`, which it must),
 #            then `release-workflows` dispatched with `--ref <tag> -f tag=<tag>`. A tag or
 #            Release made with GITHUB_TOKEN starts no `push: tags` / `release` workflow, so the
 #            build is always dispatched explicitly.
@@ -138,6 +139,27 @@ on:
         type: boolean
         required: false
         default: true
+      prerelease:
+        description: >-
+          Create the GitHub Release as a prerelease. Required, with no default: each caller
+          decides it in its own bump workflow, this workflow decides nothing. A version with a
+          `-` suffix (1.2.3-rc.1) is a prerelease either way.
+        type: boolean
+        required: true
+      release-title-suffix:
+        description: >-
+          Text appended to the Release title (the tag), e.g. " (dev build)". Empty appends
+          nothing.
+        type: string
+        required: false
+        default: ""
+      release-notes-header:
+        description: >-
+          Markdown put above the Release notes (CHANGELOG section, notes-command output or
+          GitHub's generated notes), e.g. a dev-build notice. Empty adds nothing.
+        type: string
+        required: false
+        default: ""
       release-workflows:
         description: >-
           Newline-separated workflow files dispatched after the tag with `--ref <tag> -f
@@ -487,6 +509,9 @@ jobs:
           TAG: ${{ steps.pr.outputs.tag }}
           VERSION: ${{ steps.pr.outputs.version }}
           DRAFT: ${{ inputs.release-draft }}
+          PRERELEASE: ${{ inputs.prerelease }}
+          TITLE_SUFFIX: ${{ inputs.release-title-suffix }}
+          NOTES_HEADER: ${{ inputs.release-notes-header }}
           NOTES_COMMAND: ${{ inputs.notes-command }}
           RELEASE_WORKFLOWS: ${{ inputs.release-workflows }}
         run: |
@@ -508,13 +533,21 @@ jobs:
                        if (index(h, v) == 1 && substr(h, length(v) + 1, 1) !~ /[0-9A-Za-z.+-]/) { on = 1; next } }
               on { print }' >"$NOTES_FILE" || true
           fi
-          args=(--verify-tag --title "$TAG")
+          args=(--verify-tag --title "$TAG$TITLE_SUFFIX")
           if [ -s "$NOTES_FILE" ] && grep -q '[^[:space:]]' "$NOTES_FILE"; then
+            if [ -n "$NOTES_HEADER" ]; then
+              { printf '%s\n\n' "$NOTES_HEADER"; cat "$NOTES_FILE"; } >"$NOTES_FILE.tmp"
+              mv "$NOTES_FILE.tmp" "$NOTES_FILE"
+            fi
             args+=(--notes-file "$NOTES_FILE")
           else
+            # --notes is prepended to the generated notes.
             args+=(--generate-notes)
+            [ -n "$NOTES_HEADER" ] && args+=(--notes "$NOTES_HEADER")
           fi
-          [[ "$VERSION" == *-* ]] && args+=(--prerelease)
+          if [ "$PRERELEASE" = "true" ] || [[ "$VERSION" == *-* ]]; then
+            args+=(--prerelease)
+          fi
           [ "$DRAFT" = "true" ] && args+=(--draft)
           gh release create "$TAG" -R "$R" "${args[@]}"
 

@@ -672,6 +672,11 @@ draft Release), not a script (release scripts only make the local version commit
    `release-workflows` file dispatched with `--ref <tag> -f tag=<tag>` (a tag or Release made
    with `GITHUB_TOKEN` triggers no `push: tags` / `release` workflow). Then `publish-command`.
 
+Prerelease is the caller's decision: `prerelease` is a required input with no default, so each
+repository sets it in its own bump workflow (a version with a `-` suffix is a prerelease
+either way). `release-title-suffix` (appended to the tag in the title) and
+`release-notes-header` (Markdown above the notes) label a release, e.g. as a dev build.
+
 A failure, a timeout or a closed PR before the merge closes the PR, deletes the branch and
 fails the run (and opens a `release-failure` issue): no tag, no Release. If the default branch
 moves during the checks the branch is rebuilt on the new head (`max-attempts`, 3).
@@ -720,6 +725,7 @@ jobs:
     with:
       level: ${{ inputs.level }}
       dry-run: ${{ inputs.dry-run }}
+      prerelease: false # required: this repository's decision
       release-script: tools/release.sh
       ci-workflows: |
         pipeline.yml
@@ -768,6 +774,7 @@ jobs:
     with:
       tag: ${{ inputs.tag }}
       dry-run: ${{ inputs.dry-run }}
+      prerelease: false # required: this repository's decision
       required-checks: |
         gate
       verify-command: just check
@@ -785,13 +792,15 @@ jobs:
 Stages: `checks` (the tag exists and names the commit the run is on, `required-checks`
 concluded `success` on it,
 publish secrets present when asked for) -> `verify` (`verify-command` on `verify-os`) ->
-`build` per `build-matrix` entry (`setup-command`, `build-command`, collect `bins` from
-`bin-dir`, codesign + notarize on macOS when `macos-sign` and the secrets exist, otherwise a
+`build` per `build-matrix` entry (`setup-command`, `build-command` — by default
+`cargo build --profile "$CARGO_PROFILE"` with `cargo-profile`, default `release` — collect
+`bins` from `bin-dir`, default `target/$TARGET/$PROFILE_DIR`, `debug` for the `dev` profile, codesign + notarize on macOS when `macos-sign` and the secrets exist, otherwise a
 notice unless `require-macos-sign`, `smoke-command` on native targets, `.tar.gz`/`.zip` +
 `.sha256`; macOS `verify` and `build` jobs first select Xcode `xcode-version`, default `27`,
 through `setup-xcode`, and the default `verify-os`/`build-matrix` use the `xcode-27` image)
 -> `release` (uploads to bump's Release and publishes it; `notes-command` replaces
-bump's notes; prerelease when the tag has a `-` suffix; `draft` keeps it a draft)
+bump's notes; prerelease when the required `prerelease` input is true or the tag has a `-`
+suffix; `draft` keeps it a draft)
 -> `publish` (`publish-crates` with `CARGO_REGISTRY_TOKEN`, and/or `publish-command` with
 `PUBLISH_TOKEN`, archives in `./dist`). `dry-run: true` stops after `build`.
 
@@ -832,6 +841,7 @@ jobs:
       issues: write # notify-failure
     with:
       version: ${{ inputs.version }}
+      prerelease: false # required: this repository's decision
       working-directory: desktop/macos
       project: Ketch.xcodeproj
       scheme: Ketch
@@ -857,7 +867,9 @@ it -> `spctl` on both -> `.sha256` -> with `sparkle` (default on): fetch `appcas
 `generate_appcast` (`sparkle-bin`) with the key on standard input, and verify the new item's
 EdDSA signature against the exported app's `SUPublicEDKey` -> release notes (`notes-command`,
 or git-cliff with `cliff-config`) -> publish (skipped by `dry-run`): the release under the tag
-with the `.dmg`, its checksum and the appcast, and the appcast on the feed prerelease. Every
+with the `.dmg`, its checksum and the appcast (a prerelease when the required `prerelease`
+input is true; `release-notes-header` goes above its notes), and the appcast on the feed
+prerelease. Every
 release is created with `--latest=false`, and the run fails (restoring it) if
 `/releases/latest` moved, so a CLI in the same repository keeps its installers' target.
 Notarisation uses the App Store Connect API key, or the Apple ID trio when no key is set.
