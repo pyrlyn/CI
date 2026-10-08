@@ -2,8 +2,8 @@ name: notify-release-failure
 
 # Reusable "a release failed" notifier: opens (or comments on) a `release-failure` issue in the
 # caller's repository that mentions and assigns the maintainer, with the run link and the failed
-# jobs (.github/actions/notify-release-failure). Opt-in: nothing is posted unless `maintainer`
-# is set (failure notifications are off by default).
+# jobs (.github/actions/notify-release-failure). Only a failure on `branch` (default main; a
+# tag whose commit is on it counts) notifies; pull request runs and other branches post nothing.
 #
 # Call it from the last job of a release workflow, gated on a failure of the release jobs:
 #
@@ -57,10 +57,15 @@ on:
         required: false
         default: "{}"
       maintainer:
-        description: GitHub login mentioned and assigned. Empty (the default) posts nothing.
+        description: GitHub login mentioned and assigned.
         type: string
         required: false
-        default: ""
+        default: listepo
+      branch:
+        description: The only branch whose failed runs notify (a tag on it counts).
+        type: string
+        required: false
+        default: main
       label:
         description: Issue label (created when missing).
         type: string
@@ -88,4 +93,5 @@ jobs:
           sha: ${{ inputs.sha }}
           needs: ${{ inputs.needs }}
           maintainer: ${{ inputs.maintainer }}
+          branch: ${{ inputs.branch }}
           label: ${{ inputs.label }}

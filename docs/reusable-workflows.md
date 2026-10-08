@@ -50,6 +50,8 @@ Secrets (declared in each workflow's `on.workflow_call.secrets`):
 
 - `ci-rust.yml`, `ci-dotnet.yml`, `lint.yml`: `contents: read`, `actions: write`.
 - `changes.yml`: `contents: read`.
+- `ci.yml`: `contents: read`, `security-events: write`, `pull-requests: read`,
+  `actions: write`, `issues: write` (`main-failure`).
 - `codeql.yml`, `semgrep.yml`, `snyk.yml`, `pipeline.yml`: `contents: read`,
   `security-events: write` (SARIF upload), `actions: write`.
 - `release-plz.yml`: `contents: write`, `pull-requests: write`, `actions: write`,
@@ -419,34 +421,39 @@ recipes) sets `rust: false`, keeps its local `ci.yml`, and adds a local gate:
 
 ## Notifications
 
-CI and release failures and CodeRabbit findings do not notify the maintainer by default. Every
-notifier in this repository is off unless a caller opts in per input:
+Failures notify the maintainer only when they happen on `main`. Pull requests and other
+branches never notify, and CodeRabbit findings are filed without notifying anyone.
 
-| Notifier | Off by default | Opt in |
-| --- | --- | --- |
-| `notify-release-failure` (action and workflow); `notify-failure` jobs of `release.yml`, `release-plz.yml`, `bump.yml`, `release-apple-desktop.yml` | `maintainer` / `notify-maintainer` empty | set it to a login |
-| `release-ci-alert` (action and workflow) | `maintainer` empty | set it to a login |
-| `coderabbit-issues` (action and workflow) | `assignee` empty: issues are filed, nobody is assigned | set it to a login |
-| `dependabot-automerge.yml` `notify-failure` | `notify-failures: false` | `notify-failures: true` |
-| `failure-digest.yml` | no `schedule` (manual `workflow_dispatch` only) | restore the cron |
+| Notifier | Notifies | Default | Turn off / on |
+| --- | --- | --- | --- |
+| `main-failure` job of `ci.yml` (the `main-failure` action) | a failed push, schedule or workflow_dispatch run on `main`: one `ci-main-failure` issue per workflow, mentioning and assigning `main-failure-maintainer`; the next green run on `main` closes it | on, `listepo` | `notify-main-failure: false` |
+| `notify-release-failure` (action and workflow); `notify-failure` jobs of `release.yml`, `release-plz.yml`, `bump.yml`, `release-apple-desktop.yml` | a failed release run on `branch` (default `main`; a tag whose commit is on `main` counts) | on, `listepo` | `maintainer` / `notify-maintainer: ""` |
+| `failure-digest.yml` (this repository, daily) | failed runs on each scanned repository's default branch in the last 24 hours, plus active `release-failure` issues | on (cron `0 6 * * *`) | remove the cron |
+| `release-ci-alert` (action and workflow) | nothing: release pull requests are pull request branches | off (`maintainer: ""`) | set `maintainer` |
+| `dependabot-automerge.yml` `notify-failure` | nothing: Dependabot pull requests are pull request branches | off (`notify-failures: false`) | `notify-failures: true` |
+| `coderabbit-issues` (action and workflow) | nothing: issues are filed unassigned | off (`assignee: ""`) | set `assignee` |
 
-A consumer picks this up when its `pyrlyn/ci` pin moves past this change. GitHub's own
-Actions notifications (workflow runs you triggered) are an account setting, not a workflow
-setting: "Notification settings" -> "System" -> "Actions"
+A consumer picks this up when its `pyrlyn/ci` pin moves past this change. A `ci.yml` caller
+must then grant `issues: write` as well (see docs/consumers.md). GitHub's own Actions
+notifications (workflow runs you triggered) are an account setting, not a workflow setting:
+"Notification settings" -> "System" -> "Actions"
 ([Managing GitHub Actions notifications](https://docs.github.com/en/subscriptions-and-notifications/how-tos/managing-github-actions-notifications)).
 
 ## Release failure notifications
 
-Failure notifications are off by default: CI and release failures notify no one unless a
-caller sets `notify-maintainer` (see [Notifications](#notifications)). `release.yml`,
+Only a failure on `main` notifies (see [Notifications](#notifications)). `release.yml`,
 `release-plz.yml` and `bump.yml` end with a `notify-failure` job (`if: always() &&
 contains(needs.*.result, 'failure')`; `always()` because `cancel-run` has cancelled the rest
 of the run by then) that runs the `notify-release-failure` action: it opens
 `Release failed: <workflow> <ref>` labeled `release-failure` (created when missing), mentions
-and assigns `notify-maintainer` (default empty, which turns it off), and lists the run link
+and assigns `notify-maintainer` (default `listepo`; empty turns it off), and lists the run link
 and the failed jobs. An open `release-failure` issue for the same ref (a hidden
 `<!-- release-failure ref=... -->` marker) gets a comment instead. The ref is the tag where
-one is known (`release.yml` `tag`), else the branch.
+one is known (`release.yml` `tag`), else the branch. The action notifies only when the run is
+on `branch` (default `main`): a push, schedule or dispatch on `main`, or a tag whose commit is
+on `main` (checked with the compare API; when that check fails, it notifies). Pull request runs
+and other branches post nothing. From a `workflow_run` watcher, the watched run's event,
+branch or tag and commit are checked.
 `release.yml` skips it on `dry-run`. Callers of these three must grant `issues: write`: GitHub
 rejects a nested job that asks for more than the caller grants, even with the input empty.
 
@@ -618,9 +625,9 @@ pull requests opened before the caller landed once they are rebased or updated.
 
 ## Release pull request CI alerts (`release-ci-alert.yml`)
 
-Off by default ([Notifications](#notifications)): with `maintainer` empty the watcher posts
-nothing. With `maintainer` set, ordinary pull requests still never notify about failed checks;
-a release pull request does: `release-ci-alert.yml`
+Off by default ([Notifications](#notifications)): a release pull request is a pull request
+branch, so with `maintainer` empty the watcher posts nothing. With `maintainer` set, ordinary
+pull requests still never notify about failed checks; a release pull request does: `release-ci-alert.yml`
 (the `release-ci-alert` action) runs from a `workflow_run` watcher of the repository's pull
 request workflows and comments on the pull request when it is a release pull request.
 

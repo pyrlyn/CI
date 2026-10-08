@@ -1,19 +1,19 @@
 name: failure-digest
 
-# Failure digest, on demand only (the daily schedule is off: CI failures do not notify): one
-# comment on this repository's "Daily failure digest" issue (label failure-digest, assigned to
-# the maintainer) that @mentions the maintainer. It lists only the repositories where something failed in the last 24 hours:
-# failed, timed-out or never-started runs of default-branch pushes, tag pushes, schedule,
-# workflow_dispatch, release and workflow_run events (pull requests do not count), each run
+# Daily failure digest: one comment on this repository's "Daily failure digest" issue (label
+# failure-digest, assigned to the maintainer) that @mentions the maintainer, so GitHub sends one
+# email a day. It lists only the repositories where something failed on main in the last 24
+# hours: failed, timed-out or never-started push, schedule, workflow_dispatch and workflow_run
+# runs on the default branch (pull requests, other branches and tags do not count), each run
 # with its workflow, branch or tag, link, failed jobs and Kyiv time, plus open release-failure
 # issues with activity in the window. A day without failures posts nothing at all.
 # The issue code is shared with notify-release-failure (.github/scripts/failure-digest.sh,
 # .github/actions/notify-release-failure/notify-issue.sh).
 #
-# The old cron, 06:00 UTC, is 09:00 in Kyiv in summer (EEST) and 08:00 in winter (EET).
+# 06:00 UTC is 09:00 in Kyiv in summer (EEST) and 08:00 in winter (EET); cron has no time zone.
 on:
-  # No schedule: CI failures do not notify the maintainer. Run it by hand (workflow_dispatch),
-  # or restore `schedule: [{cron: "0 6 * * *"}]` to get the daily digest back.
+  schedule:
+    - cron: "0 6 * * *"
   workflow_dispatch:
     inputs:
       repos:

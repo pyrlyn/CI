@@ -195,10 +195,10 @@ on:
       notify-maintainer:
         description: >-
           GitHub login mentioned and assigned on a `release-failure` issue when the release
-          fails (not for a dry run). Empty (the default) turns it off.
+          fails (not for a dry run). Empty turns it off.
         type: string
         required: false
-        default: ""
+        default: listepo
     secrets:
       MACOS_CERTIFICATE:
         description: "Base64 Developer ID Application .p12."
@@ -718,8 +718,8 @@ jobs:
             security delete-keychain "$KEYCHAIN" || true
           fi
 
-  # With `notify-maintainer` set (off by default), a failed app release opens or comments on a
-  # `release-failure` issue that mentions and assigns that login. Its own
+  # A failed app release on main (a tag on main counts) opens or comments on a
+  # `release-failure` issue that mentions and assigns the maintainer. Its own
   # job, so the signing job gains no permissions. A dry run is not a release.
   notify-failure:
     name: notify on failure

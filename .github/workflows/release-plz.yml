@@ -15,7 +15,7 @@ name: release-plz
 # opened with GITHUB_TOKEN starts no workflows, so it would be merged with no CI.
 #
 # Caller job permissions: contents: write, pull-requests: write, actions: write, issues: write
-# (notify-failure, opt-in: a failed run opens a `release-failure` issue).
+# (notify-failure: a failed run opens a `release-failure` issue).
 on:
   workflow_call:
     inputs:
@@ -29,12 +29,11 @@ on:
       notify-maintainer:
         description: >-
           GitHub login mentioned and assigned on a `release-failure` issue when a job of this
-          workflow fails (.github/actions/notify-release-failure). Empty (the default) turns it
-          off. The
+          workflow fails (.github/actions/notify-release-failure). Empty turns it off. The
           calling job must grant `issues: write` either way.
         type: string
         required: false
-        default: ""
+        default: listepo
       tag-prefix:
         description: Tag prefix before the version, e.g. "v" or "my-crate-v".
         type: string
@@ -117,9 +116,10 @@ jobs:
         if: failure() && inputs.cancel-run-on-failure
         uses: $/.github/actions/cancel-run # nosemgrep: github-actions-mutable-action-tag
 
-  # With `notify-maintainer` set (off by default), a failed release opens (or comments on) a
-  # `release-failure` issue that mentions and assigns that login. always(): cancel-run cancels the rest of the run after the
-  # first failure, and this job must run anyway.
+  # A failed release on main (a tag on main counts) opens (or comments on) a `release-failure`
+  # issue that mentions and assigns the maintainer; other branches and pull requests post
+  # nothing (the notify-release-failure action checks the ref). always(): cancel-run cancels
+  # the rest of the run after the first failure, and this job must run anyway.
   notify-failure:
     name: notify on failure
     needs: [release-pr]
