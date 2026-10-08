@@ -180,6 +180,18 @@ on:
         type: string
         required: false
         default: ""
+      release-notes-header:
+        description: Markdown put above the release notes, e.g. a dev-build notice. Empty adds nothing.
+        type: string
+        required: false
+        default: ""
+      prerelease:
+        description: >-
+          Publish the app release as a prerelease. Required, with no default: each caller
+          decides it in its own workflow, this workflow decides nothing. Never /releases/latest
+          either way.
+        type: boolean
+        required: true
       notify-maintainer:
         description: >-
           GitHub login mentioned and assigned on a `release-failure` issue when the release
@@ -656,16 +668,24 @@ jobs:
         env:
           TAG: ${{ steps.version.outputs.tag }}
           TITLE: ${{ inputs.release-title }}
+          NOTES_HEADER: ${{ inputs.release-notes-header }}
+          PRERELEASE: ${{ inputs.prerelease }}
           SPARKLE: ${{ inputs.sparkle }}
           APPCAST_TAG: ${{ inputs.appcast-tag }}
         run: |
           set -euo pipefail
           title="${TITLE:-$APP_NAME for macOS $VERSION}"
+          if [ -n "$NOTES_HEADER" ]; then
+            { printf '%s\n\n' "$NOTES_HEADER"; cat "$NOTES"; } >"$NOTES.tmp"
+            mv "$NOTES.tmp" "$NOTES"
+          fi
+          pre=()
+          [ "$PRERELEASE" != "true" ] || pre=(--prerelease)
           assets=("$DMG" "$DMG.sha256")
           [ "$SPARKLE" != "true" ] || assets+=("$APPCAST_DIR/appcast.xml")
           before="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name 2>/dev/null || true)"
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "$title" --notes-file "$NOTES" --latest=false "${assets[@]}"
+            --title "$title" --notes-file "$NOTES" --latest=false "${pre[@]}" "${assets[@]}"
 
           # The feed release is a prerelease as well, so neither /releases/latest nor a
           # release listing that skips prereleases ever picks it.
