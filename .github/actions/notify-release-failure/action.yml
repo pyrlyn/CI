@@ -3,8 +3,7 @@ description: >-
   Turn a failed release run into a GitHub issue in the same repository, labeled
   `release-failure`, mentioning and assigning the maintainer, with the run link and the failed
   job names. An open `release-failure` issue for the same ref gets a comment instead of a
-  duplicate. GitHub has no per-workflow notification filter, so this is how a release failure
-  (and only a release failure) reaches the maintainer. Needs `issues: write` and
+  duplicate. Opt-in: nothing is posted unless `maintainer` is set. Needs `issues: write` and
   `actions: read` on the job; runs on any runner with `gh` and `jq` (GitHub-hosted ones).
 inputs:
   ref:
@@ -34,9 +33,11 @@ inputs:
     required: false
     default: "{}"
   maintainer:
-    description: GitHub login mentioned and assigned.
+    description: >-
+      GitHub login mentioned and assigned. Empty (the default) posts nothing: failure
+      notifications are opt-in.
     required: false
-    default: listepo
+    default: ""
   label:
     description: Label on the issue (created when missing).
     required: false
@@ -49,6 +50,7 @@ runs:
   using: composite
   steps:
     - name: Open or update the release-failure issue
+      if: inputs.maintainer != ''
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token }}

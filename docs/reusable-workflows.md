@@ -417,15 +417,33 @@ recipes) sets `rust: false`, keeps its local `ci.yml`, and adds a local gate:
           needs: ${{ toJSON(needs) }}
 ```
 
+## Notifications
+
+CI and release failures and CodeRabbit findings do not notify the maintainer by default. Every
+notifier in this repository is off unless a caller opts in per input:
+
+| Notifier | Off by default | Opt in |
+| --- | --- | --- |
+| `notify-release-failure` (action and workflow); `notify-failure` jobs of `release.yml`, `release-plz.yml`, `bump.yml`, `release-apple-desktop.yml` | `maintainer` / `notify-maintainer` empty | set it to a login |
+| `release-ci-alert` (action and workflow) | `maintainer` empty | set it to a login |
+| `coderabbit-issues` (action and workflow) | `assignee` empty: issues are filed, nobody is assigned | set it to a login |
+| `dependabot-automerge.yml` `notify-failure` | `notify-failures: false` | `notify-failures: true` |
+| `failure-digest.yml` | no `schedule` (manual `workflow_dispatch` only) | restore the cron |
+
+A consumer picks this up when its `pyrlyn/ci` pin moves past this change. GitHub's own
+Actions notifications (workflow runs you triggered) are an account setting, not a workflow
+setting: "Notification settings" -> "System" -> "Actions"
+([Managing GitHub Actions notifications](https://docs.github.com/en/subscriptions-and-notifications/how-tos/managing-github-actions-notifications)).
+
 ## Release failure notifications
 
-GitHub cannot filter Actions notifications per workflow, so the maintainer's personal Actions
-notifications stay off and only release workflows notify, by issue. `release.yml`,
+Failure notifications are off by default: CI and release failures notify no one unless a
+caller sets `notify-maintainer` (see [Notifications](#notifications)). `release.yml`,
 `release-plz.yml` and `bump.yml` end with a `notify-failure` job (`if: always() &&
 contains(needs.*.result, 'failure')`; `always()` because `cancel-run` has cancelled the rest
 of the run by then) that runs the `notify-release-failure` action: it opens
 `Release failed: <workflow> <ref>` labeled `release-failure` (created when missing), mentions
-and assigns `notify-maintainer` (default `listepo`; empty turns it off), and lists the run link
+and assigns `notify-maintainer` (default empty, which turns it off), and lists the run link
 and the failed jobs. An open `release-failure` issue for the same ref (a hidden
 `<!-- release-failure ref=... -->` marker) gets a comment instead. The ref is the tag where
 one is known (`release.yml` `tag`), else the branch.
@@ -564,7 +582,7 @@ issue per actionable inline review comment of a CodeRabbit review.
 - **Issue**: title `CodeRabbit: <first line of the comment>`, the pull request link, file and
   line(s) with a link to the comment, the commit, the comment body (no `@` mentions outside code
   blocks, no HTML comments), label `coderabbit` (created when missing), assigned to `assignee`
-  (default `listepo`; empty assigns nobody).
+  (default empty: nobody is assigned, so a new issue notifies no one).
 - **Dedupe**: a hidden `<!-- coderabbit-comment-id: N -->` marker; an issue with the label and
   that marker (open or closed) means the comment is never filed again.
 - **Cap**: at most `max-create` (default 20) issues per run; `dry-run` only logs.
@@ -600,9 +618,9 @@ pull requests opened before the caller landed once they are rebased or updated.
 
 ## Release pull request CI alerts (`release-ci-alert.yml`)
 
-GitHub's Actions notifications cannot be filtered per pull request, so the maintainer keeps them
-off ([Release failure notifications](#release-failure-notifications)) and ordinary pull
-requests never notify about failed checks. A release pull request does: `release-ci-alert.yml`
+Off by default ([Notifications](#notifications)): with `maintainer` empty the watcher posts
+nothing. With `maintainer` set, ordinary pull requests still never notify about failed checks;
+a release pull request does: `release-ci-alert.yml`
 (the `release-ci-alert` action) runs from a `workflow_run` watcher of the repository's pull
 request workflows and comments on the pull request when it is a release pull request.
 
@@ -611,7 +629,8 @@ request workflows and comments on the pull request when it is a release pull req
   `release: v`.
 - **Pull request of the run**: `workflow_run.pull_requests`, else every open pull request whose
   head is the run's commit (fork pull requests included).
-- **Comment**: mentions `maintainer` (default `listepo`; the mention is the notification) and
+- **Comment**: mentions `maintainer` (default empty: no comment at all; the mention is the
+  notification) and
   lists the workflow run, the failed or timed-out jobs and steps with links, the number of jobs
   cancelled after the failure, and the last `tail-lines` (default 30) log lines up to the last
   error of up to five failed jobs. One comment per workflow and commit (hidden
@@ -883,7 +902,8 @@ Unifies rtok/ketch/cox. The caller runs its CI and passes the result. Only Depen
 PRs from a branch of the repository are touched. Update types listed in
 `allowed-update-types` are merged with `gh pr merge --<merge-method> --match-head-commit`
 (never `--admin`, never `--auto`); others get `review-label`, and a major update is assigned
-to `maintainer` with a review request. A failed CI or merge assigns and mentions `maintainer`.
+to `maintainer` with a review request. With `notify-failures: true`, a failed CI or merge
+assigns and mentions `maintainer`; by default failures notify no one.
 
 | Input | Default |
 | --- | --- |
@@ -894,6 +914,7 @@ to `maintainer` with a review request. A failed CI or merge assigns and mentions
 | `wait-minutes` | `90` (max 90) |
 | `review-label` | `needs-review` |
 | `maintainer` | `listepo` (empty: nobody is assigned or mentioned) |
+| `notify-failures` | `false` (`true`: a failed CI or merge assigns and mentions `maintainer`) |
 
 ```yaml
 name: Dependabot

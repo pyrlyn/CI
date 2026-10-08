@@ -5,9 +5,9 @@ description: >-
   chore(release) / release: v title): mention, failed jobs and steps, log tails.
 inputs:
   maintainer:
-    description: GitHub login mentioned in the comment.
+    description: GitHub login mentioned in the comment. Empty (the default) posts nothing.
     required: false
-    default: listepo
+    default: ""
   tail-lines:
     description: Log lines quoted per failed job (up to the last error line).
     required: false
@@ -16,6 +16,7 @@ runs:
   using: composite
   steps:
     - name: Comment on a failed release pull request
+      if: inputs.maintainer != ''
       uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
       env:
         MAINTAINER: ${{ inputs.maintainer }}
