@@ -65,7 +65,8 @@ on:
         description: >-
           Script run as `<script> <level> <release-script-args>` from the repository root. It
           must make at most one commit and push nothing; it may write `version=` to
-          $GITHUB_OUTPUT. Empty: use `release-plz-update`.
+          $GITHUB_OUTPUT. Empty: `release-plz-update` when set, else scripts/release.sh when
+          the repository has one (executable).
         type: string
         required: false
         default: ""
@@ -109,6 +110,7 @@ on:
           required checks. Dispatched on the bump branch (`gh workflow run <file> --ref
           <branch>`) when there is no BUMP_TOKEN, and on the default branch for
           release-untagged-head. With BUMP_TOKEN the PR's pull_request CI reports them.
+          Empty: ci.yml and pipeline.yml, each that exists and has workflow_dispatch.
         type: string
         required: false
         default: ""
@@ -259,6 +261,21 @@ jobs:
           push_url="https://x-access-token:${PUSH_TOKEN}@github.com/$R.git"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Defaults. release-script: scripts/release.sh when it exists and neither
+          # release-script nor release-plz-update is set (that combination used to fail).
+          # ci-workflows: ci.yml and pipeline.yml, each that exists and has workflow_dispatch.
+          if [ -z "$SCRIPT" ] && [ "$RELEASE_PLZ" != "true" ] && [ -x scripts/release.sh ]; then
+            SCRIPT=scripts/release.sh
+            echo "release-script: $SCRIPT (default)"
+          fi
+          if [ -z "$(tr -d '[:space:]' <<<"$CI_WORKFLOWS")" ]; then
+            CI_WORKFLOWS=""
+            for w in ci.yml pipeline.yml; do
+              f=".github/workflows/$w"
+              if [ -f "$f" ] && grep -Eq '\bworkflow_dispatch\b' "$f"; then CI_WORKFLOWS+="$w"$'\n'; fi
+            done
+            if [ -n "$CI_WORKFLOWS" ]; then printf 'ci-workflows (default):\n%s' "$CI_WORKFLOWS"; fi
+          fi
           if [ "$HAS_BUMP_TOKEN" != "true" ] && [ -z "$CI_WORKFLOWS" ]; then
             echo "::warning::no BUMP_TOKEN and no ci-workflows: nothing will report the required checks"
           fi

@@ -96,6 +96,15 @@ on:
         type: string
         required: false
         default: ""
+      locked:
+        description: >-
+          auto | true | false. Pass --locked (LOCKED_ARGS) to clippy, check, the doctests and
+          the default test-command and build-command, so a stale Cargo.lock fails instead of
+          being rewritten. auto: only when the workspace has a Cargo.lock. clippy-args that
+          already hold --locked are not given a second one.
+        type: string
+        required: false
+        default: auto
       tools:
         description: >-
           Comma-separated tools installed with taiki-e/install-action before the tests
@@ -113,11 +122,11 @@ on:
       test-command:
         description: >-
           Bash that runs the tests on entries the runner can execute natively. Empty skips
-          the tests. PACKAGE_ARGS and FEATURE_ARGS are set. `--all-targets` does not run
-          doctests; the `doc-tests` step does.
+          the tests. PACKAGE_ARGS, FEATURE_ARGS and LOCKED_ARGS are set. `--all-targets` does
+          not run doctests; the `doc-tests` step does.
         type: string
         required: false
-        default: cargo test $PACKAGE_ARGS --all-targets $FEATURE_ARGS
+        default: cargo test $PACKAGE_ARGS --all-targets $FEATURE_ARGS $LOCKED_ARGS
       doc-tests:
         description: >-
           Also run `cargo test $PACKAGE_ARGS --doc $FEATURE_ARGS` where the tests run. A
@@ -127,11 +136,12 @@ on:
         default: true
       build-command:
         description: >-
-          Bash that builds a cross target the runner cannot execute. TARGET, PACKAGE_ARGS and
-          FEATURE_ARGS are set.
+          Bash that builds a cross target the runner cannot execute. TARGET, PACKAGE_ARGS,
+          FEATURE_ARGS and LOCKED_ARGS are set.
         type: string
         required: false
-        default: cargo build $PACKAGE_ARGS --all-targets $FEATURE_ARGS --target "$TARGET"
+        default: >-
+          cargo build $PACKAGE_ARGS --all-targets $FEATURE_ARGS $LOCKED_ARGS --target "$TARGET"
       package-args:
         description: >-
           Package selection for clippy, check, the tests and the MSRV check. Default
@@ -383,6 +393,8 @@ jobs:
         env:
           RUST_VERSION: ${{ inputs.rust-version }}
           TEST: ${{ matrix.test }}
+          LOCKED: ${{ inputs.locked }}
+          CLIPPY_ARGS: ${{ inputs.clippy-args }}
         run: |
           set -euo pipefail
           if [ -n "$RUST_VERSION" ]; then
@@ -411,6 +423,24 @@ jobs:
           fi
           echo "NATIVE=$native" >> "$GITHUB_ENV"
           echo "host $host, target $TARGET, tests run: $native"
+          case "$LOCKED" in
+            true) locked=--locked ;;
+            false) locked="" ;;
+            auto)
+              manifest="$(cargo locate-project --workspace --message-format plain)"
+              locked=""
+              if [ -f "$(dirname "$manifest")/Cargo.lock" ]; then locked=--locked; fi
+              ;;
+            *) echo "::error::locked must be auto, true or false, got '$LOCKED'"; exit 1 ;;
+          esac
+          echo "LOCKED_ARGS=$locked" >> "$GITHUB_ENV"
+          # clippy-args that already pass --locked (the pre-`locked` way) get no second one:
+          # cargo rejects a repeated --locked.
+          case " $CLIPPY_ARGS " in
+            *" --locked "*) echo "CLIPPY_LOCKED_ARGS=" >> "$GITHUB_ENV" ;;
+            *) echo "CLIPPY_LOCKED_ARGS=$locked" >> "$GITHUB_ENV" ;;
+          esac
+          echo "locked: ${locked:-no}"
 
       - if: env.RUN == 'true'
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -441,7 +471,7 @@ jobs:
           # CLIPPY_ARGS and TARGET_ARGS are split on whitespace on purpose.
           # shellcheck disable=SC2086
           cargo clippy $PACKAGE_ARGS --all-targets $FEATURE_ARGS $TARGET_ARGS $CLIPPY_ARGS \
-            -- -D warnings
+            $CLIPPY_LOCKED_ARGS -- -D warnings
 
       - if: env.RUN == 'true'
         name: check
@@ -450,7 +480,8 @@ jobs:
           FEATURE_ARGS: ${{ inputs.feature-args }}
         run: |
           # shellcheck disable=SC2086
-          cargo check $PACKAGE_ARGS --all-targets $FEATURE_ARGS $TARGET_ARGS $CLIPPY_ARGS
+          cargo check $PACKAGE_ARGS --all-targets $FEATURE_ARGS $TARGET_ARGS $CLIPPY_ARGS \
+            $CLIPPY_LOCKED_ARGS
 
       - name: test
         if: env.RUN == 'true' && env.NATIVE == 'true' && inputs.test-command != ''
@@ -465,9 +496,9 @@ jobs:
           # The step shell runs with -e; keep going after a failure to inspect the log.
           set +e -uo pipefail
           log="$RUNNER_TEMP/doctests.log"
-          # PACKAGE_ARGS and FEATURE_ARGS are split on whitespace on purpose.
+          # PACKAGE_ARGS, FEATURE_ARGS and LOCKED_ARGS are split on whitespace on purpose.
           # shellcheck disable=SC2086
-          cargo test $PACKAGE_ARGS --doc $FEATURE_ARGS 2>&1 | tee "$log"
+          cargo test $PACKAGE_ARGS --doc $FEATURE_ARGS $LOCKED_ARGS 2>&1 | tee "$log"
           code=${PIPESTATUS[0]}
           if [ "$code" -ne 0 ] && grep -q 'no library targets found' "$log"; then
             echo "::notice title=doctests skipped::no library target in the selected packages"
