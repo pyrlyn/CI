@@ -18,6 +18,10 @@ repository. All third-party actions are pinned to full commit SHAs.
 | `release-plz.yml` | release PR only; never tags, releases or dispatches (bump does) |
 | `release.yml` | release build on bump's tag: checks, verify, build, sign/notarize, smoke, upload, publish |
 | `release-apple-desktop.yml` | macOS app release: signed, notarised `.dmg`, Sparkle appcast, GitHub Release (production only) |
+| `windows-sign.yml` | sign a Windows build and pack one MSIX (production only) |
+| `flatpak.yml` | build one Flatpak bundle from the caller's manifest |
+| `testflight.yml` | upload an iOS IPA to TestFlight; a pull request does not upload |
+| `play.yml` | upload a signed Android App Bundle; a pull request does not upload |
 | `notify-release-failure.yml` | open or update a `release-failure` issue for a failed release |
 | `warnings-to-issues.yml` | one issue per code scanning / SonarCloud warning; closed when the warning is gone |
 | `coderabbit-issues.yml` | one issue per actionable CodeRabbit inline review comment |
@@ -39,6 +43,12 @@ Secrets (declared in each workflow's `on.workflow_call.secrets`):
   `APPSTORE_CONNECT_KEY`, `APPSTORE_CONNECT_KEY_ID`, `APPSTORE_CONNECT_ISSUER_ID` (or `APPLE_ID`,
   `APPLE_TEAM_ID`, `APPLE_APP_PASSWORD`), `SPARKLE_ED_PRIVATE_KEY` (with `sparkle`); organization
   secrets, passed with `secrets: inherit`; a missing one stops the run before the build.
+- `windows-sign.yml`: `WINDOWS_CERTIFICATE`, `WINDOWS_CERTIFICATE_PWD`; a missing one stops the run
+  before the layout is packed.
+- `flatpak.yml`: none.
+- `testflight.yml`: `MACOS_CERTIFICATE`, `MACOS_CERTIFICATE_PWD` (macos-sign), `APPSTORE_CONNECT_KEY`,
+  `APPSTORE_CONNECT_KEY_ID`, `APPSTORE_CONNECT_ISSUER_ID`. A pull request does not upload.
+- `play.yml`: `PLAY_SERVICE_ACCOUNT_JSON`. A pull request does not upload.
 - `sonarcloud.yml`: `SONAR_TOKEN` (optional; every step skips without it).
 - `dependabot-automerge.yml`: none (uses `github.token`).
 - `warnings-to-issues.yml`: `SONAR_TOKEN` (optional; public SonarCloud projects need none).
@@ -57,6 +67,10 @@ Secrets (declared in each workflow's `on.workflow_call.secrets`):
 - `release.yml`: `contents: write` (Release assets), `checks: read`, `actions: write`,
   `issues: write`.
 - `release-apple-desktop.yml`: `contents: write`, `actions: read`, `issues: write`.
+- `windows-sign.yml`: `contents: read`, `actions: write`.
+- `flatpak.yml`: `contents: read`, `actions: write`.
+- `testflight.yml`: `contents: read`, `actions: write`.
+- `play.yml`: `contents: read`, `actions: write`.
 - `bump.yml`: `contents: write`, `pull-requests: write`, `actions: write`, `checks: read`,
   `statuses: read`, `issues: write`.
 - `notify-release-failure.yml`: `actions: read`, `issues: write`.
@@ -876,6 +890,147 @@ Notarisation uses the App Store Connect API key, or the Apple ID trio when no ke
 
 A single job, so it does not end with `cancel-run`; `notify-failure` opens the
 `release-failure` issue as in release.yml (not for a dry run).
+
+## windows-sign.yml
+
+Production packaging of one Windows layout. Never call it for an unsigned test build: the
+certificate is required and a missing secret stops the run before `makeappx`. The caller owns
+the trigger (dispatch or a tag). This workflow does not register a required check.
+
+```yaml
+jobs:
+  sign:
+    uses: pyrlyn/ci/.github/workflows/windows-sign.yml@<sha> # main
+    permissions:
+      contents: read
+      actions: write
+    with:
+      layout: desktop/windows/layout
+      output: Mailune.msix
+    secrets: inherit
+```
+
+| Input | Default |
+| --- | --- |
+| `layout` (required) | directory with `AppxManifest.xml` at its root, relative to the repository |
+| `output` | `app.msix` (a file name, not a path) |
+| `build-command` | `""` (bash in `working-directory` that produces the layout) |
+| `working-directory` | `.` |
+| `dotnet-version` | `""` (skips `actions/setup-dotnet`) |
+| `runs-on` | `windows-latest` |
+| `timeout-minutes` | `60` |
+| `cancel-run-on-failure` | `true` |
+
+Secrets: `WINDOWS_CERTIFICATE` (base64 `.pfx`) and `WINDOWS_CERTIFICATE_PWD`. The job checks
+them, optionally installs the SDK and runs `build-command`, packs with the newest x64
+`makeappx` from the Windows SDK, signs with `signtool` (SHA256, Microsoft timestamp), verifies
+with `signtool verify /pa`, and uploads the MSIX as an artifact named after `output`. The
+`.pfx` is deleted before the step ends, including when signing fails. The password is not
+printed. Output: `package` (the file name).
+
+## flatpak.yml
+
+Builds one Flatpak from the caller's manifest and uploads the bundle. The manifest chooses the
+runtime; this workflow installs that SDK from `repo-url` (default Flathub) and does not sign
+the repository. Flathub submission stays in the app repository.
+
+```yaml
+jobs:
+  flatpak:
+    uses: pyrlyn/ci/.github/workflows/flatpak.yml@<sha> # main
+    permissions:
+      contents: read
+      actions: write
+    with:
+      manifest: desktop/linux/app.mailune.yml
+      app-id: app.mailune.Mailune
+```
+
+| Input | Default |
+| --- | --- |
+| `manifest` (required) | path relative to the repository root |
+| `app-id` (required) | application id for `flatpak build-bundle` |
+| `bundle` | `dist/app.flatpak` |
+| `arch` | `x86_64` |
+| `branch` | `""` (manifest default) |
+| `repo-url` | Flathub's `flathub.flatpakrepo` |
+| `runs-on` | `ubuntu-latest` |
+| `timeout-minutes` | `90` |
+| `cancel-run-on-failure` | `true` |
+
+`flatpak-builder` runs as the user with `--disable-rofiles-fuse` because the hosted runner has
+no FUSE device, and `--install-deps-from=flathub` so the SDK is the one the manifest names.
+Output: `bundle` (the relative path). The file is also uploaded as `flatpak-<arch>`.
+
+## testflight.yml
+
+Uploads one signed IPA to TestFlight. The certificate check is the `macos-sign` action in
+`discover` mode (the same `.p12` import as the other Apple workflows). The upload uses that
+action's App Store Connect API key (`APPSTORE_CONNECT_KEY`, key id, issuer) with `altool`.
+
+A pull request does not upload. The gate treats `pull_request` and `pull_request_target` as
+skip, and the upload step exits if it is ever reached on those events. `build-command` still
+runs, so a caller can compile on a pull request without sending a build.
+
+```yaml
+jobs:
+  testflight:
+    uses: pyrlyn/ci/.github/workflows/testflight.yml@<sha> # main
+    permissions:
+      contents: read
+      actions: write
+    with:
+      ipa: build/Mailune.ipa
+      build-command: xcodebuild -scheme Mailune -destination 'generic/platform=iOS' build
+    secrets: inherit
+```
+
+| Input | Default |
+| --- | --- |
+| `ipa` (required) | path relative to the repository root |
+| `working-directory` | `.` |
+| `build-command` | `""` |
+| `runs-on` | `macos-26` |
+| `xcode-version` | `""` (image default; otherwise `setup-xcode`) |
+| `timeout-minutes` | `90` |
+| `cancel-run-on-failure` | `true` |
+
+The `.p8` is written to `~/private_keys` for `altool` and removed when the step ends. The key
+bytes are not printed.
+
+## play.yml
+
+Uploads one signed Android App Bundle to Google Play. The caller signs the bundle. This
+workflow checks the JAR signature with `jarsigner -verify -strict` and then uploads with
+`r0adkll/upload-google-play` (pinned). The service-account JSON is a secret and is not printed.
+
+A pull request does not upload. `pull_request` and `pull_request_target` skip the check and
+the upload.
+
+```yaml
+jobs:
+  play:
+    uses: pyrlyn/ci/.github/workflows/play.yml@<sha> # main
+    permissions:
+      contents: read
+      actions: write
+    with:
+      aab: app/build/outputs/bundle/release/app-release.aab
+      package-name: app.mailune
+      track: internal
+    secrets: inherit
+```
+
+| Input | Default |
+| --- | --- |
+| `aab` (required) | path of the signed bundle, relative to the repository |
+| `package-name` (required) | Android application id |
+| `track` | `internal` (`alpha`, `beta`, `production`) |
+| `status` | `completed` (`draft`, `inProgress`, `halted`) |
+| `changes-not-sent-for-review` | `false` |
+| `runs-on` | `ubuntu-latest` |
+| `timeout-minutes` | `30` |
+| `cancel-run-on-failure` | `true` |
 
 ## dependabot-automerge.yml
 
