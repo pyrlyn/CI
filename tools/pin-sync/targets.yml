@@ -21,6 +21,9 @@ targets:
       - {template: dependabot.yml, dest: .github/workflows/dependabot.yml,
          vars: {wait-workflow: ci.yml}}
   - repo: pyrlyn/ketch
+    # dist-generate.sh writes the notify-release-failure pin into the generated release.yml,
+    # and CI fails when a regenerated release.yml differs from the committed one.
+    paths: [".github/**/*.yml", ".github/**/*.yaml", scripts/dist-generate.sh]
     templates:
       - {template: dependabot.yml, dest: .github/workflows/dependabot.yml,
          vars: {wait-workflow: ci.yml}}
