@@ -1,0 +1,80 @@
+name: pin-sync
+
+# Moves the pyrlyn/ci pins of every repository in tools/pin-sync/targets.yml to one commit of
+# this repository's main and refreshes the files rendered from templates/: one pull request per
+# repository from ci/pin-sync, force-pushed by later runs, never merged by the bot (the target's
+# required checks and a human decide). Weekly, or by hand for a given commit.
+# Writing needs the PIN_SYNC_TOKEN org secret: a GitHub App installation token or fine-grained
+# PAT with Contents, Pull requests and Workflows read/write on the targets (Workflows because
+# every change is under .github/). Without it the run is a dry run that lists the changes; a
+# manual run then fails with a clear error, the weekly one only warns.
+on:
+  schedule:
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: pyrlyn/ci commit to pin. Empty = the head of main.
+        type: string
+        default: ""
+      repo:
+        description: Only this target (e.g. pyrlyn/rtok). Empty = all.
+        type: string
+        default: ""
+      dry-run:
+        description: Report what would change without writing.
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Sync
+        env:
+          SYNC_TOKEN: ${{ secrets.PIN_SYNC_TOKEN }}
+          READ_TOKEN: ${{ github.token }}
+          SHA_INPUT: ${{ inputs.sha }}
+          REPO_INPUT: ${{ inputs.repo }}
+          DRY_RUN_INPUT: ${{ inputs.dry-run && 'true' || 'false' }}
+        run: |
+          set -euo pipefail
+          sha="${SHA_INPUT:-$(git rev-parse origin/main)}"
+          git merge-base --is-ancestor "$sha" origin/main \
+            || { echo "::error::$sha is not on pyrlyn/ci main"; exit 1; }
+          sha="$(git rev-parse "$sha^{commit}")"
+          missing=false
+          if [ -n "$SYNC_TOKEN" ]; then
+            export GH_TOKEN="$SYNC_TOKEN"
+            dry_run="$DRY_RUN_INPUT"
+            gh auth setup-git
+          else
+            missing=true
+            export GH_TOKEN="$READ_TOKEN"
+            dry_run=true
+            echo "::warning::PIN_SYNC_TOKEN is not set; running as a dry run."
+          fi
+          args=(--config tools/pin-sync/targets.yml --sha "$sha")
+          if [ "$dry_run" = true ]; then args+=(--dry-run); fi
+          if [ -n "$REPO_INPUT" ]; then args+=(--repo "$REPO_INPUT"); fi
+          python3 tools/pin-sync/pin_sync.py "${args[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$missing" = true ] && [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            msg="PIN_SYNC_TOKEN is not set, so nothing was written (dry run above)."
+            msg+=" Add an org secret PIN_SYNC_TOKEN with Contents, Pull requests and"
+            msg+=" Workflows read/write on the targets in tools/pin-sync/targets.yml."
+            echo "::error title=PIN_SYNC_TOKEN missing::$msg"
+            printf '\n**Error:** %s\n' "$msg" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi

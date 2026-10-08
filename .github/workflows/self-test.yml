@@ -227,6 +227,8 @@ jobs:
       - run: bash tests/config/test.sh
       # The commits action's script on a scratch repository, offline.
       - run: bash tests/commits/test.sh
+      # pin-sync's rewrite and template rendering on a scratch checkout, offline.
+      - run: bash tests/pin-sync/test.sh
       - id: live
         uses: ./.github/actions/changes
       - name: Live outputs are booleans
