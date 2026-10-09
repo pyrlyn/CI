@@ -164,6 +164,7 @@ jobs:
       security-events: write
       pull-requests: read
       actions: write
+      issues: write # main-failure
     with:
       config-file: tests/fixtures/infra.yml
 
@@ -277,7 +278,8 @@ jobs:
           # This repository has no .NET project.
           [ "$DOTNET_PRESENT" = false ]
 
-  # The daily failure digest and the shared issue script, offline against a fake gh.
+  # The daily failure digest, the shared issue script, the main-failure issue script and the
+  # release notifier's main-branch check, offline against a fake gh.
   failure-digest:
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: failure-digest
@@ -288,6 +290,7 @@ jobs:
         with:
           persist-credentials: false
       - run: bash tests/failure-digest/test.sh
+      - run: bash tests/main-failure/test.sh
 
   # warnings-to-issues: the script offline against a fake gh and a local fake SonarCloud.
   warnings-to-issues-test:

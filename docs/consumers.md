@@ -35,3 +35,9 @@ false. Before moving a pin past 416dbf9, change the calling job's permissions:
 `issues: write` (a failed release opens a `release-failure` issue; docs/reusable-workflows.md,
 "Release failure notifications"). Before moving a pin of any of the three past it, add
 `issues: write` to the calling job's permissions, or the run fails at startup.
+
+## Upgrading a pin past main-failure
+
+`ci.yml` gained a `main-failure` job (on by default) that asks for `issues: write`. Before
+moving a `ci.yml` pin past it, add `issues: write` to the calling job's permissions, or the run
+fails at startup even with `notify-main-failure: false`.

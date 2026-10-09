@@ -15,7 +15,7 @@ inputs:
   assignee:
     description: GitHub login assigned to each issue; empty assigns nobody.
     required: false
-    default: listepo
+    default: ""
   max-create:
     description: Most issues opened per run; the rest are listed as deferred.
     required: false

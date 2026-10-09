@@ -4,8 +4,8 @@
 # - waits for {{wait-workflow}} on the head commit and refuses unless its latest run succeeded;
 # - squash-merges `version-update:semver-patch` pinned to that commit (never --auto, never
 #   --admin); minor and major updates get the `needs-review` label;
-# - assigns and mentions @listepo on a major update (with a review request) and when the
-#   merge job fails.
+# - assigns and mentions @listepo on a major update (with a review request); CI or merge
+#   failures notify only with `notify-failures: true`.
 # Inputs: https://github.com/pyrlyn/ci/blob/main/docs/reusable-workflows.md
 name: Dependabot
 

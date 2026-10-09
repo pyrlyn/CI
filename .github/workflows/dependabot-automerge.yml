@@ -9,8 +9,8 @@ name: dependabot-automerge
 #   with `gh pr merge --<merge-method> --match-head-commit <sha>` (never --admin, never --auto:
 #   without branch protection --auto merges at once). Other updates get `review-label`; a major
 #   update also assigns `maintainer` and requests a review.
-# - `notify-failure`: when CI or the merge failed, assign and mention `maintainer` with the
-#   failing jobs. A cancelled run stays silent.
+# - `notify-failure`: only with `notify-failures: true` (off by default), when CI or the merge
+#   failed, assign and mention `maintainer` with the failing jobs. A cancelled run stays silent.
 #
 # Caller job permissions: contents: write, pull-requests: write, actions: read.
 on:
@@ -56,6 +56,13 @@ on:
         type: string
         required: false
         default: listepo
+      notify-failures:
+        description: >-
+          Assign and mention `maintainer` when CI or the merge failed. Off by default: CI
+          failures do not notify.
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -176,7 +183,7 @@ jobs:
     needs: automerge
     # The caller's CI failed, or the merge job did. A cancelled run is not a failure.
     if: >-
-      !cancelled() && inputs.maintainer != ''
+      !cancelled() && inputs.notify-failures && inputs.maintainer != ''
       && (inputs.ci-result == 'failure' || needs.automerge.result == 'failure')
       && github.event_name == 'pull_request'
       && github.actor == 'dependabot[bot]'

@@ -13,10 +13,14 @@ name: ci
 # check and custom job without `docs-only: true` (lint, license and commits by default); the
 # gate still reports. `license` (license-check.yml) and `commits` (the commits action) are off
 # by default and replace a repository's own license-check.yml caller and commits job.
+# `main-failure` (on by default, `notify-main-failure`) reports a failed push, schedule or
+# workflow_dispatch run on main in one `ci-main-failure` issue per workflow and closes it when
+# main is green again; pull requests and other branches never notify.
 #
 # Caller job permissions: contents: read, security-events: write (SARIF), pull-requests: read
-# (SonarCloud), actions: write (cancel-run). A caller granting less fails at startup even for
-# disabled checks, because GitHub validates every nested job's permissions.
+# (SonarCloud), actions: write (cancel-run), issues: write (main-failure). A caller granting
+# less fails at startup even for disabled checks, because GitHub validates every nested job's
+# permissions.
 # Secrets: SNYK_TOKEN, SONAR_TOKEN (optional; the jobs skip without them).
 on:
   workflow_call:
@@ -33,6 +37,19 @@ on:
         type: string
         required: false
         default: ""
+      notify-main-failure:
+        description: >-
+          On a failed push, schedule or workflow_dispatch run on main, open (or comment on) a
+          `ci-main-failure` issue that mentions and assigns `main-failure-maintainer`; close it
+          when main is green again. Pull requests and other branches never notify.
+        type: boolean
+        required: false
+        default: true
+      main-failure-maintainer:
+        description: GitHub login mentioned and assigned on the ci-main-failure issue.
+        type: string
+        required: false
+        default: listepo
     secrets:
       SNYK_TOKEN:
         description: Snyk API token (optional).
@@ -324,3 +341,23 @@ jobs:
           skip-ok: ${{ needs.config.outputs.skip-ok }}
       - id: done
         run: echo "result=success" >> "$GITHUB_OUTPUT"
+
+  # CI failure notification for main only: a failed push, schedule or workflow_dispatch run on
+  # main opens (or comments on) one `ci-main-failure` issue per workflow; a green one closes it.
+  # always(): it must also run after cancel-run has cancelled the rest of the run.
+  main-failure:
+    needs:
+      [config, rust, dotnet, codeql, semgrep, snyk, sonarcloud, lint, license, commits, custom, gate]
+    if: >-
+      always() && inputs.notify-main-failure && inputs.main-failure-maintainer != ''
+      && github.ref == 'refs/heads/main'
+      && contains(fromJSON('["push", "schedule", "workflow_dispatch"]'), github.event_name)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - uses: $/.github/actions/main-failure # nosemgrep: github-actions-mutable-action-tag
+        with:
+          needs: ${{ toJSON(needs) }}
+          maintainer: ${{ inputs.main-failure-maintainer }}

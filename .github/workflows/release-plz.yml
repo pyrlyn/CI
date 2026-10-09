@@ -116,10 +116,10 @@ jobs:
         if: failure() && inputs.cancel-run-on-failure
         uses: $/.github/actions/cancel-run # nosemgrep: github-actions-mutable-action-tag
 
-  # A failed release opens (or comments on) a `release-failure` issue that mentions and assigns
-  # the maintainer: the only failure notification, since GitHub cannot filter Actions
-  # notifications per workflow. always(): cancel-run cancels the rest of the run after the
-  # first failure, and this job must run anyway.
+  # A failed release on main (a tag on main counts) opens (or comments on) a `release-failure`
+  # issue that mentions and assigns the maintainer; other branches and pull requests post
+  # nothing (the notify-release-failure action checks the ref). always(): cancel-run cancels
+  # the rest of the run after the first failure, and this job must run anyway.
   notify-failure:
     name: notify on failure
     needs: [release-pr]

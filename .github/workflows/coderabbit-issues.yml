@@ -1,9 +1,10 @@
 name: coderabbit-issues
 
 # Reusable "CodeRabbit findings as issues": one issue per actionable CodeRabbit inline review
-# comment (.github/actions/coderabbit-issues), labeled `coderabbit`, assigned to the maintainer,
-# deduped by a hidden `<!-- coderabbit-comment-id: N -->` marker. Nitpicks, warnings, notices,
-# summaries, status comments and replies are skipped. No secrets: on a fork's pull request the
+# comment (.github/actions/coderabbit-issues), labeled `coderabbit`, assigned to `assignee`
+# (default nobody, so filing an issue notifies no one), deduped by a hidden
+# `<!-- coderabbit-comment-id: N -->` marker. Nitpicks, warnings, notices, summaries, status
+# comments and replies are skipped. No secrets: on a fork's pull request the
 # token is read-only and the run only logs a warning.
 #
 # Caller (docs/reusable-workflows.md "CodeRabbit findings as issues"):
@@ -36,7 +37,7 @@ on:
         description: GitHub login assigned to each issue; empty assigns nobody.
         type: string
         required: false
-        default: listepo
+        default: ""
       max-create:
         description: Most issues opened per run; the rest are listed as deferred.
         type: number

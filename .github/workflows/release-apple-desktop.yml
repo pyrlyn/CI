@@ -726,8 +726,8 @@ jobs:
             security delete-keychain "$KEYCHAIN" || true
           fi
 
-  # A failed app release opens or comments on a `release-failure` issue that mentions and
-  # assigns the maintainer: GitHub cannot filter Actions notifications per workflow. Its own
+  # A failed app release on main (a tag on main counts) opens or comments on a
+  # `release-failure` issue that mentions and assigns the maintainer. Its own
   # job, so the signing job gains no permissions. A dry run is not a release.
   notify-failure:
     name: notify on failure
