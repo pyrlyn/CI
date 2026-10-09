@@ -10,7 +10,9 @@ name: ci
 # by config). Repository-specific jobs (`jobs:` in the config) run as one matrix job. `gate`
 # runs with always() and fails on anything but success, except jobs the config turned off.
 # With `docs-only.enabled`, a pull request that changes documentation only turns off every
-# check and custom job without `docs-only: true` (lint by default); the gate still reports.
+# check and custom job without `docs-only: true` (lint, license and commits by default); the
+# gate still reports. `license` (license-check.yml) and `commits` (the commits action) are off
+# by default and replace a repository's own license-check.yml caller and commits job.
 #
 # Caller job permissions: contents: read, security-events: write (SARIF), pull-requests: read
 # (SonarCloud), actions: write (cancel-run). A caller granting less fails at startup even for
@@ -76,6 +78,7 @@ jobs:
     uses: $/.github/workflows/ci-rust.yml
     with:
       cancel-run-on-failure: ${{ fromJSON(needs.config.outputs.json).cancel-run-on-failure }}
+      skip-drafts: ${{ fromJSON(needs.config.outputs.json).skip-drafts }}
       matrix: ${{ fromJSON(needs.config.outputs.json).rust.matrix-json }}
       rust-version: ${{ fromJSON(needs.config.outputs.json).rust.rust-version }}
       fmt-runs-on: ${{ fromJSON(needs.config.outputs.json).rust.fmt-runs-on }}
@@ -89,6 +92,7 @@ jobs:
       build-command: ${{ fromJSON(needs.config.outputs.json).rust.build-command }}
       package-args: ${{ fromJSON(needs.config.outputs.json).rust.package-args }}
       feature-args: ${{ fromJSON(needs.config.outputs.json).rust.feature-args }}
+      locked: ${{ fromJSON(needs.config.outputs.json).rust.locked }}
       msrv: ${{ fromJSON(needs.config.outputs.json).rust.msrv }}
       msrv-command: ${{ fromJSON(needs.config.outputs.json).rust.msrv-command }}
       timeout-minutes: ${{ fromJSON(needs.config.outputs.json).rust.timeout-minutes }}
@@ -104,6 +108,7 @@ jobs:
     uses: $/.github/workflows/ci-dotnet.yml
     with:
       cancel-run-on-failure: ${{ fromJSON(needs.config.outputs.json).cancel-run-on-failure }}
+      skip-drafts: ${{ fromJSON(needs.config.outputs.json).skip-drafts }}
       dotnet-version: ${{ fromJSON(needs.config.outputs.json).dotnet.dotnet-version }}
       working-directory: ${{ fromJSON(needs.config.outputs.json).dotnet.working-directory }}
       test-command: ${{ fromJSON(needs.config.outputs.json).dotnet.test-command }}
@@ -121,6 +126,7 @@ jobs:
       actions: write
     with:
       cancel-run-on-failure: ${{ fromJSON(needs.config.outputs.json).cancel-run-on-failure }}
+      skip-drafts: ${{ fromJSON(needs.config.outputs.json).skip-drafts }}
       languages: ${{ fromJSON(needs.config.outputs.json).codeql.languages-json }}
       build-mode: ${{ fromJSON(needs.config.outputs.json).codeql.build-mode }}
       queries: ${{ fromJSON(needs.config.outputs.json).codeql.queries }}
@@ -139,6 +145,7 @@ jobs:
       actions: write
     with:
       cancel-run-on-failure: ${{ fromJSON(needs.config.outputs.json).cancel-run-on-failure }}
+      skip-drafts: ${{ fromJSON(needs.config.outputs.json).skip-drafts }}
       config: ${{ fromJSON(needs.config.outputs.json).semgrep.config }}
       extra-args: ${{ fromJSON(needs.config.outputs.json).semgrep.extra-args }}
       fail-on-findings: ${{ fromJSON(needs.config.outputs.json).semgrep.fail-on-findings }}
@@ -154,6 +161,7 @@ jobs:
       actions: write
     with:
       cancel-run-on-failure: ${{ fromJSON(needs.config.outputs.json).cancel-run-on-failure }}
+      skip-drafts: ${{ fromJSON(needs.config.outputs.json).skip-drafts }}
       args: ${{ fromJSON(needs.config.outputs.json).snyk.args }}
       monitor: ${{ fromJSON(needs.config.outputs.json).snyk.monitor }}
       upload: ${{ fromJSON(needs.config.outputs.json).upload-sarif }}
@@ -170,6 +178,7 @@ jobs:
       actions: write
     with:
       cancel-run-on-failure: ${{ fromJSON(needs.config.outputs.json).cancel-run-on-failure }}
+      skip-drafts: ${{ fromJSON(needs.config.outputs.json).skip-drafts }}
       organization: ${{ fromJSON(needs.config.outputs.json).sonarcloud.organization }}
       project-key: ${{ fromJSON(needs.config.outputs.json).sonarcloud.project-key }}
       args: ${{ fromJSON(needs.config.outputs.json).sonarcloud.args }}
@@ -190,9 +199,45 @@ jobs:
     uses: $/.github/workflows/lint.yml
     with:
       cancel-run-on-failure: ${{ fromJSON(needs.config.outputs.json).cancel-run-on-failure }}
+      skip-drafts: ${{ fromJSON(needs.config.outputs.json).skip-drafts }}
       actionlint-version: ${{ fromJSON(needs.config.outputs.json).lint.actionlint-version }}
+      ignore-generated: ${{ fromJSON(needs.config.outputs.json).lint.ignore-generated }}
       args: ${{ fromJSON(needs.config.outputs.json).lint.args }}
       extra-command: ${{ fromJSON(needs.config.outputs.json).lint.extra-command }}
+
+  # License files against pyrlyn/ci's canonical ones (licenses/targets.yml).
+  license:
+    needs: config
+    if: fromJSON(needs.config.outputs.json).license.run
+    uses: $/.github/workflows/license-check.yml
+    with:
+      cancel-run-on-failure: ${{ fromJSON(needs.config.outputs.json).cancel-run-on-failure }}
+      skip-drafts: ${{ fromJSON(needs.config.outputs.json).skip-drafts }}
+      canonical-ref: ${{ fromJSON(needs.config.outputs.json).license.canonical-ref }}
+      check-headers: ${{ fromJSON(needs.config.outputs.json).license.check-headers }}
+      header-exclude: ${{ fromJSON(needs.config.outputs.json).license.header-exclude }}
+
+  # A pull request's commit subjects must be Conventional Commits.
+  commits:
+    needs: config
+    if: fromJSON(needs.config.outputs.json).commits.run
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Full history: the range runs from the pull request's base branch to HEAD.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: $/.github/actions/commits # nosemgrep: github-actions-mutable-action-tag
+        with:
+          tool: ${{ fromJSON(needs.config.outputs.json).commits.tool }}
+          types: ${{ fromJSON(needs.config.outputs.json).commits.types-list }}
+      - name: Cancel the run on failure
+        if: >-
+          failure() && !cancelled()
+          && fromJSON(needs.config.outputs.json).cancel-run-on-failure
+        uses: $/.github/actions/cancel-run # nosemgrep: github-actions-mutable-action-tag
 
   # Repository-specific jobs from the config's `jobs:` list, one matrix entry each.
   custom:
@@ -262,7 +307,8 @@ jobs:
         uses: $/.github/actions/cancel-run # nosemgrep: github-actions-mutable-action-tag
 
   gate:
-    needs: [config, rust, dotnet, codeql, semgrep, snyk, sonarcloud, lint, custom]
+    needs:
+      [config, rust, dotnet, codeql, semgrep, snyk, sonarcloud, lint, license, commits, custom]
     # always(): also runs (and fails) after a cancel-run, so a required `ci / gate` is never
     # `skipped` (which counts as passed). Skipped on a draft PR when skip-drafts is on, like
     # pipeline.yml, so a draft never shows a green gate. A failed `config` fails the gate.

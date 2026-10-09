@@ -1,0 +1,10 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-global-schema.json",
+  "platform": "github",
+  "autodiscover": true,
+  "autodiscoverFilter": ["pyrlyn/*"],
+  "onboarding": false,
+  "requireConfig": "optional",
+  "allowedUnsafeExecutions": ["mise"],
+  "extends": ["local>pyrlyn/ci//renovate/mise"]
+}

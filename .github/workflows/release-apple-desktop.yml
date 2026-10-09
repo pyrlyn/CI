@@ -180,6 +180,18 @@ on:
         type: string
         required: false
         default: ""
+      release-notes-header:
+        description: Markdown put above the release notes, e.g. a dev-build notice. Empty adds nothing.
+        type: string
+        required: false
+        default: ""
+      prerelease:
+        description: >-
+          Publish the app release as a prerelease. Required, with no default: each caller
+          decides it in its own workflow, this workflow decides nothing. Never /releases/latest
+          either way.
+        type: boolean
+        required: true
       notify-maintainer:
         description: >-
           GitHub login mentioned and assigned on a `release-failure` issue when the release
@@ -256,6 +268,9 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$TAG_PREFIX" =~ ^[A-Za-z0-9._/-]+$ ]] || { echo "invalid tag-prefix" >&2; exit 1; }
+          case "$APP_NAME" in
+            ""|*$'\n'*|*$'\r'*) echo "app-name must be a single line" >&2; exit 1 ;;
+          esac
           [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || {
             echo "version must be X.Y.Z without a leading v or a suffix (got '$VERSION')" >&2
             exit 1
@@ -417,6 +432,9 @@ jobs:
             -exportOptionsPlist "$EXPORT_OPTIONS" -exportPath "$RUNNER_TEMP/export"
           app="$RUNNER_TEMP/export/$APP_NAME.app"
           [ -d "$app" ] || { echo "no $APP_NAME.app in the export" >&2; exit 1; }
+          # '\n' is the spelling CodeQL treats as a single-line sanitizer; $'\n' drops a real newline
+          # so the path cannot append another entry to GITHUB_ENV.
+          app="$(printf '%s' "$app" | tr -d '\n\r' | tr -d $'\n\r')"
           echo "APP=$app" >> "$GITHUB_ENV"
 
           # What notarisation and Sparkle rely on, checked before either runs.
@@ -495,6 +513,8 @@ jobs:
           notarise "$dmg"
           xcrun stapler staple "$dmg"
           xcrun stapler validate "$dmg"
+          # Same single-line write as APP: app-name and version are caller inputs.
+          dmg="$(printf '%s' "$dmg" | tr -d '\n\r' | tr -d $'\n\r')"
           echo "DMG=$dmg" >> "$GITHUB_ENV"
 
       # What a user's Mac decides on first open.
@@ -656,16 +676,24 @@ jobs:
         env:
           TAG: ${{ steps.version.outputs.tag }}
           TITLE: ${{ inputs.release-title }}
+          NOTES_HEADER: ${{ inputs.release-notes-header }}
+          PRERELEASE: ${{ inputs.prerelease }}
           SPARKLE: ${{ inputs.sparkle }}
           APPCAST_TAG: ${{ inputs.appcast-tag }}
         run: |
           set -euo pipefail
           title="${TITLE:-$APP_NAME for macOS $VERSION}"
+          if [ -n "$NOTES_HEADER" ]; then
+            { printf '%s\n\n' "$NOTES_HEADER"; cat "$NOTES"; } >"$NOTES.tmp"
+            mv "$NOTES.tmp" "$NOTES"
+          fi
+          pre=()
+          [ "$PRERELEASE" != "true" ] || pre=(--prerelease)
           assets=("$DMG" "$DMG.sha256")
           [ "$SPARKLE" != "true" ] || assets+=("$APPCAST_DIR/appcast.xml")
           before="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name 2>/dev/null || true)"
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "$title" --notes-file "$NOTES" --latest=false "${assets[@]}"
+            --title "$title" --notes-file "$NOTES" --latest=false "${pre[@]}" "${assets[@]}"
 
           # The feed release is a prerelease as well, so neither /releases/latest nor a
           # release listing that skips prereleases ever picks it.

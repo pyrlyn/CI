@@ -9,7 +9,7 @@ repository. All third-party actions are pinned to full commit SHAs.
 | `ci-rust.yml` | fmt, clippy, check, tests on a shared OS/target matrix, optional MSRV |
 | `ci-dotnet.yml` | `dotnet test` for every solution; a passing no-op until a .NET project exists |
 | `changes.yml` | classify changed files by ecosystem (Rust, Swift, .NET) for suite selection |
-| `lint.yml` | actionlint (+ shellcheck) on the caller's workflows |
+| `lint.yml` | actionlint (+ shellcheck) on the caller's workflows; cargo-dist's generated `release.yml` is skipped (`ignore-generated`). In this repository the same file also runs on pull requests and on every push to `main` |
 | `codeql.yml` | CodeQL per language, SARIF to code scanning |
 | `semgrep.yml` | Semgrep OSS (`p/default`), SARIF to code scanning |
 | `snyk.yml` | Snyk Open Source; off by default (switch), skipped without a token |
@@ -21,6 +21,10 @@ repository. All third-party actions are pinned to full commit SHAs.
 | `build-cli.yml` | release building block: CLI archives per {os, target}, macOS signed via `macos-keychain`, smoke test, artifacts |
 | `build-macos-dmg.yml` | release building block: macOS `.app` in a checked, Developer ID-signed (not notarised) `.dmg` artifact |
 | `publish-release.yml` | release building block: one GitHub release from all artifacts; `-test.N` tags become prereleases, never latest |
+| `windows-sign.yml` | sign a Windows build and pack one MSIX (production only) |
+| `flatpak.yml` | build one Flatpak bundle from the caller's manifest |
+| `testflight.yml` | upload an iOS IPA to TestFlight; a pull request does not upload |
+| `play.yml` | upload a signed Android App Bundle; a pull request does not upload |
 | `notify-release-failure.yml` | open or update a `release-failure` issue for a failed release |
 | `warnings-to-issues.yml` | one issue per code scanning / SonarCloud warning; closed when the warning is gone |
 | `coderabbit-issues.yml` | one issue per actionable CodeRabbit inline review comment |
@@ -45,6 +49,12 @@ Secrets (declared in each workflow's `on.workflow_call.secrets`):
 - `build-cli.yml`, `build-macos-dmg.yml`: `MACOS_CERTIFICATE`, `MACOS_CERTIFICATE_PWD` (required
   unless `require-signing: false`).
 - `publish-release.yml`: none (uses `github.token`).
+- `windows-sign.yml`: `WINDOWS_CERTIFICATE`, `WINDOWS_CERTIFICATE_PWD`; a missing one stops the run
+  before the layout is packed.
+- `flatpak.yml`: none.
+- `testflight.yml`: `MACOS_CERTIFICATE`, `MACOS_CERTIFICATE_PWD` (macos-sign), `APPSTORE_CONNECT_KEY`,
+  `APPSTORE_CONNECT_KEY_ID`, `APPSTORE_CONNECT_ISSUER_ID`. A pull request does not upload.
+- `play.yml`: `PLAY_SERVICE_ACCOUNT_JSON`. A pull request does not upload.
 - `sonarcloud.yml`: `SONAR_TOKEN` (optional; every step skips without it).
 - `dependabot-automerge.yml`: none (uses `github.token`).
 - `warnings-to-issues.yml`: `SONAR_TOKEN` (optional; public SonarCloud projects need none).
@@ -65,6 +75,10 @@ Secrets (declared in each workflow's `on.workflow_call.secrets`):
 - `release-apple-desktop.yml`: `contents: write`, `actions: read`, `issues: write`.
 - `build-cli.yml`, `build-macos-dmg.yml`: `contents: read`.
 - `publish-release.yml`: `contents: write`.
+- `windows-sign.yml`: `contents: read`, `actions: write`.
+- `flatpak.yml`: `contents: read`, `actions: write`.
+- `testflight.yml`: `contents: read`, `actions: write`.
+- `play.yml`: `contents: read`, `actions: write`.
 - `bump.yml`: `contents: write`, `pull-requests: write`, `actions: write`, `checks: read`,
   `statuses: read`, `issues: write`.
 - `notify-release-failure.yml`: `actions: read`, `issues: write`.
@@ -100,6 +114,8 @@ Composite actions (reference them as `pyrlyn/ci/.github/actions/<name>@<sha>`):
 | `macos-keychain` | import the Developer ID identity into a job keychain kept for later steps (the release builds' one signing setup) |
 | `setup-xcode` | select the pinned Xcode (default 27) with `xcode-select`; fails when it is missing |
 | `cancel-run` | cancel the current workflow run (last step, `if: failure()`); `actions: write` |
+| `setup-rust` | Rust from the caller's mise.toml as the active toolchain; fails on any other rustc |
+| `commits` | Conventional Commits subjects of a pull request's commits (grep or commitlint) |
 | `notify-release-failure` | `release-failure` issue (mention + assign) for a failed release run |
 | `warnings-to-issues` | sync code scanning / SonarCloud warnings with GitHub issues (the workflow's step) |
 | `coderabbit-issues` | CodeRabbit inline findings to GitHub issues (the workflow's step) |
@@ -172,6 +188,39 @@ concurrency:
   cancel-in-progress: false
 ```
 
+## Draft pull requests (`skip-drafts`)
+
+A draft pull request runs no CI; marking it ready for review runs everything as usual.
+
+- ci-rust, ci-dotnet, codeql, semgrep, snyk, sonarcloud, lint, license-check and pages take
+  `skip-drafts` (boolean, default `true`): on a draft `pull_request` their first job is skipped
+  at job level (`if:`), so no runner starts. ci-rust skips `plan` and with it every job that
+  needs it; pages skips `build` and `deploy`. Pass `skip-drafts: false` to run drafts.
+- ci.yml passes its `skip-drafts` config key ([config](config.md)) on to every workflow it
+  calls; pipeline.yml skips every job, the gate included, on a draft.
+- The caller's `pull_request` trigger lists `ready_for_review`, or marking a draft ready starts
+  no run and the checks of the last (skipped) draft run stay on the head commit:
+
+  ```yaml
+  on:
+    pull_request:
+      branches: [main]
+      types: [opened, synchronize, reopened, ready_for_review]
+  ```
+
+- The caller's own jobs on `pull_request` take the same guard:
+  `if: github.event_name != 'pull_request' || !github.event.pull_request.draft` (with `&&`
+  when the job has an `if` already). A job with `!cancelled()` or `always()` runs even when
+  the jobs it needs were skipped, so it needs the guard itself.
+- Required checks: a job skipped at job level counts as passed, while a skipped matrix job or a
+  skipped call of a reusable workflow reports one check under its raw name, so required checks
+  such as `rust / fmt` stay pending on a draft. Neither lets a draft through: GitHub does not
+  merge a draft, and `ready_for_review` runs the full set on the head commit before a merge.
+- Not skipped: `changes.yml` (a non-success reads as "unknown, run everything" in callers that
+  fail open, so skipping it would start their heavy jobs; the callers guard those jobs),
+  `pull_request_target` workflows (cla.yml), Dependabot flows (Dependabot never opens drafts)
+  and release workflows.
+
 ## Free plan and private repositories
 
 pyrlyn/ci is public, so any repository (public or private) can call it. Code scanning
@@ -196,15 +245,17 @@ every job fails if `rustc --version` is not the pinned version.
 | `package-args` | `--workspace` | packages for every cargo command (`-p x`; `""` = root only) |
 | `feature-args` | `--all-features` | used by clippy, check, test, doctests, build, MSRV |
 | `clippy-args` | `""` | extra args before `--` for clippy and check |
+| `locked` | `auto` | `--locked` (`LOCKED_ARGS`) for clippy, check, doctests and the default test/build commands; auto = the workspace has a Cargo.lock |
 | `tools` | `""` | taiki-e/install-action tools (e.g. `nextest`) |
 | `setup-command` | `""` | bash before clippy (system packages) |
-| `test-command` | `cargo test $PACKAGE_ARGS --all-targets $FEATURE_ARGS` | native targets only |
+| `test-command` | `cargo test $PACKAGE_ARGS --all-targets $FEATURE_ARGS $LOCKED_ARGS` | native targets only |
 | `doc-tests` | `true` | `cargo test $PACKAGE_ARGS --doc $FEATURE_ARGS`; no lib: skipped |
-| `build-command` | `cargo build $PACKAGE_ARGS --all-targets $FEATURE_ARGS --target "$TARGET"` | |
+| `build-command` | `cargo build $PACKAGE_ARGS --all-targets $FEATURE_ARGS $LOCKED_ARGS --target "$TARGET"` | |
 | `msrv` | `""` | e.g. `1.85`; adds an `msrv` job |
 | `msrv-command` | `cargo check $PACKAGE_ARGS --all-targets $FEATURE_ARGS` | |
 | `changed-only` | `false` | no work (jobs still pass under their names) when no Rust file changed |
 | `skip` | `false` | no work (jobs still pass under their names) whatever changed, e.g. docs-only |
+| `skip-runs-on` | `ubuntu-latest` | runner of every matrix entry when there is no work (`""` = each entry's `os`) |
 | `full-package-args` | `--workspace` | replaces `package-args` when a Cargo.toml/Cargo.lock changed |
 | `fmt-runs-on`, `mise-install-args`, `cache-all-refs`, `timeout-minutes` | | |
 
@@ -218,7 +269,10 @@ a diff: schedule, workflow_dispatch, a `.github/` or `mise.toml` change) always 
 suite: `full-package-args` instead of `package-args`, and `changed-only` never skips it.
 `changed-only` is off by default because tests often read non-Rust files (docs, fixtures);
 when on, the matrix still expands and every step is a no-op, so required checks named after
-the targets report success instead of waiting.
+the targets report success instead of waiting. Without work (`skip`, or `changed-only` and no
+Rust change) every entry runs on `skip-runs-on` (`ubuntu-latest`) instead of its own `os`: the
+check names (`target`) stay, and a docs-only change starts no macOS (Xcode), Windows or ARM
+runner.
 
 ## Dependency-driven suite selection (`changes`)
 
@@ -641,6 +695,11 @@ draft Release), not a script (release scripts only make the local version commit
    `release-workflows` file dispatched with `--ref <tag> -f tag=<tag>` (a tag or Release made
    with `GITHUB_TOKEN` triggers no `push: tags` / `release` workflow). Then `publish-command`.
 
+Prerelease is the caller's decision: `prerelease` is a required input with no default, so each
+repository sets it in its own bump workflow (a version with a `-` suffix is a prerelease
+either way). `release-title-suffix` (appended to the tag in the title) and
+`release-notes-header` (Markdown above the notes) label a release, e.g. as a dev build.
+
 A failure, a timeout or a closed PR before the merge closes the PR, deletes the branch and
 fails the run (and opens a `release-failure` issue): no tag, no Release. If the default branch
 moves during the checks the branch is rebuilt on the new head (`max-attempts`, 3).
@@ -656,7 +715,9 @@ GitHub limits it designs around:
   It never merges (its owner may be a bypass actor). Without it, `GITHUB_TOKEN` opens the PR
   and `ci-workflows` lists the workflows to dispatch on the branch (each needs
   `workflow_dispatch`; check run names, e.g. `pipeline / gate` for a reusable call, are the
-  same for a dispatched run).
+  same for a dispatched run). Empty `ci-workflows` means `ci.yml` and `pipeline.yml`, each
+  that exists and has `workflow_dispatch`; empty `release-script` (without
+  `release-plz-update`) means `scripts/release.sh` when the repository has it.
 - The repository must allow rebase merging (`allow_rebase_merge`), and the ruleset's
   `pull_request` rule must list `rebase` in `allowed_merge_methods`.
 
@@ -687,6 +748,7 @@ jobs:
     with:
       level: ${{ inputs.level }}
       dry-run: ${{ inputs.dry-run }}
+      prerelease: false # required: this repository's decision
       release-script: tools/release.sh
       ci-workflows: |
         pipeline.yml
@@ -735,6 +797,7 @@ jobs:
     with:
       tag: ${{ inputs.tag }}
       dry-run: ${{ inputs.dry-run }}
+      prerelease: false # required: this repository's decision
       required-checks: |
         gate
       verify-command: just check
@@ -752,13 +815,15 @@ jobs:
 Stages: `checks` (the tag exists and names the commit the run is on, `required-checks`
 concluded `success` on it,
 publish secrets present when asked for) -> `verify` (`verify-command` on `verify-os`) ->
-`build` per `build-matrix` entry (`setup-command`, `build-command`, collect `bins` from
-`bin-dir`, codesign + notarize on macOS when `macos-sign` and the secrets exist, otherwise a
+`build` per `build-matrix` entry (`setup-command`, `build-command` — by default
+`cargo build --profile "$CARGO_PROFILE"` with `cargo-profile`, default `release` — collect
+`bins` from `bin-dir`, default `target/$TARGET/$PROFILE_DIR`, `debug` for the `dev` profile, codesign + notarize on macOS when `macos-sign` and the secrets exist, otherwise a
 notice unless `require-macos-sign`, `smoke-command` on native targets, `.tar.gz`/`.zip` +
 `.sha256`; macOS `verify` and `build` jobs first select Xcode `xcode-version`, default `27`,
 through `setup-xcode`, and the default `verify-os`/`build-matrix` use the `xcode-27` image)
 -> `release` (uploads to bump's Release and publishes it; `notes-command` replaces
-bump's notes; prerelease when the tag has a `-` suffix; `draft` keeps it a draft)
+bump's notes; prerelease when the required `prerelease` input is true or the tag has a `-`
+suffix; `draft` keeps it a draft)
 -> `publish` (`publish-crates` with `CARGO_REGISTRY_TOKEN`, and/or `publish-command` with
 `PUBLISH_TOKEN`, archives in `./dist`). `dry-run: true` stops after `build`.
 
@@ -799,6 +864,7 @@ jobs:
       issues: write # notify-failure
     with:
       version: ${{ inputs.version }}
+      prerelease: false # required: this repository's decision
       working-directory: desktop/macos
       project: Ketch.xcodeproj
       scheme: Ketch
@@ -824,7 +890,9 @@ it -> `spctl` on both -> `.sha256` -> with `sparkle` (default on): fetch `appcas
 `generate_appcast` (`sparkle-bin`) with the key on standard input, and verify the new item's
 EdDSA signature against the exported app's `SUPublicEDKey` -> release notes (`notes-command`,
 or git-cliff with `cliff-config`) -> publish (skipped by `dry-run`): the release under the tag
-with the `.dmg`, its checksum and the appcast, and the appcast on the feed prerelease. Every
+with the `.dmg`, its checksum and the appcast (a prerelease when the required `prerelease`
+input is true; `release-notes-header` goes above its notes), and the appcast on the feed
+prerelease. Every
 release is created with `--latest=false`, and the run fails (restoring it) if
 `/releases/latest` moved, so a CLI in the same repository keeps its installers' target.
 Notarisation uses the App Store Connect API key, or the Apple ID trio when no key is set.
@@ -855,7 +923,7 @@ jobs:
     steps: [ ... ]
   cli:
     needs: version
-    uses: pyrlyn/infra/.github/workflows/build-cli.yml@<sha>
+    uses: pyrlyn/ci/.github/workflows/build-cli.yml@<sha>
     with:
       ref: ${{ needs.version.outputs.ref }}
       matrix: >-
@@ -869,7 +937,7 @@ jobs:
       MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
   desktop:
     needs: version
-    uses: pyrlyn/infra/.github/workflows/build-macos-dmg.yml@<sha>
+    uses: pyrlyn/ci/.github/workflows/build-macos-dmg.yml@<sha>
     with:
       ref: ${{ needs.version.outputs.ref }}
       setup-command: bash scripts/desktop/xcframework.sh
@@ -881,7 +949,7 @@ jobs:
       MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
   publish:
     needs: [version, cli, desktop]
-    uses: pyrlyn/infra/.github/workflows/publish-release.yml@<sha>
+    uses: pyrlyn/ci/.github/workflows/publish-release.yml@<sha>
     permissions:
       contents: write
     with:
@@ -931,6 +999,147 @@ whole Dependabot run as `startup_failure` (on every pull request, Dependabot's o
       actions: write    # ci-rust.yml (cancel-run-on-failure)
 ```
 
+## windows-sign.yml
+
+Production packaging of one Windows layout. Never call it for an unsigned test build: the
+certificate is required and a missing secret stops the run before `makeappx`. The caller owns
+the trigger (dispatch or a tag). This workflow does not register a required check.
+
+```yaml
+jobs:
+  sign:
+    uses: pyrlyn/ci/.github/workflows/windows-sign.yml@<sha> # main
+    permissions:
+      contents: read
+      actions: write
+    with:
+      layout: desktop/windows/layout
+      output: Mailune.msix
+    secrets: inherit
+```
+
+| Input | Default |
+| --- | --- |
+| `layout` (required) | directory with `AppxManifest.xml` at its root, relative to the repository |
+| `output` | `app.msix` (a file name, not a path) |
+| `build-command` | `""` (bash in `working-directory` that produces the layout) |
+| `working-directory` | `.` |
+| `dotnet-version` | `""` (skips `actions/setup-dotnet`) |
+| `runs-on` | `windows-latest` |
+| `timeout-minutes` | `60` |
+| `cancel-run-on-failure` | `true` |
+
+Secrets: `WINDOWS_CERTIFICATE` (base64 `.pfx`) and `WINDOWS_CERTIFICATE_PWD`. The job checks
+them, optionally installs the SDK and runs `build-command`, packs with the newest x64
+`makeappx` from the Windows SDK, signs with `signtool` (SHA256, Microsoft timestamp), verifies
+with `signtool verify /pa`, and uploads the MSIX as an artifact named after `output`. The
+`.pfx` is deleted before the step ends, including when signing fails. The password is not
+printed. Output: `package` (the file name).
+
+## flatpak.yml
+
+Builds one Flatpak from the caller's manifest and uploads the bundle. The manifest chooses the
+runtime; this workflow installs that SDK from `repo-url` (default Flathub) and does not sign
+the repository. Flathub submission stays in the app repository.
+
+```yaml
+jobs:
+  flatpak:
+    uses: pyrlyn/ci/.github/workflows/flatpak.yml@<sha> # main
+    permissions:
+      contents: read
+      actions: write
+    with:
+      manifest: desktop/linux/app.mailune.yml
+      app-id: app.mailune.Mailune
+```
+
+| Input | Default |
+| --- | --- |
+| `manifest` (required) | path relative to the repository root |
+| `app-id` (required) | application id for `flatpak build-bundle` |
+| `bundle` | `dist/app.flatpak` |
+| `arch` | `x86_64` |
+| `branch` | `""` (manifest default) |
+| `repo-url` | Flathub's `flathub.flatpakrepo` |
+| `runs-on` | `ubuntu-latest` |
+| `timeout-minutes` | `90` |
+| `cancel-run-on-failure` | `true` |
+
+`flatpak-builder` runs as the user with `--disable-rofiles-fuse` because the hosted runner has
+no FUSE device, and `--install-deps-from=flathub` so the SDK is the one the manifest names.
+Output: `bundle` (the relative path). The file is also uploaded as `flatpak-<arch>`.
+
+## testflight.yml
+
+Uploads one signed IPA to TestFlight. The certificate check is the `macos-sign` action in
+`discover` mode (the same `.p12` import as the other Apple workflows). The upload uses that
+action's App Store Connect API key (`APPSTORE_CONNECT_KEY`, key id, issuer) with `altool`.
+
+A pull request does not upload. The gate treats `pull_request` and `pull_request_target` as
+skip, and the upload step exits if it is ever reached on those events. `build-command` still
+runs, so a caller can compile on a pull request without sending a build.
+
+```yaml
+jobs:
+  testflight:
+    uses: pyrlyn/ci/.github/workflows/testflight.yml@<sha> # main
+    permissions:
+      contents: read
+      actions: write
+    with:
+      ipa: build/Mailune.ipa
+      build-command: xcodebuild -scheme Mailune -destination 'generic/platform=iOS' build
+    secrets: inherit
+```
+
+| Input | Default |
+| --- | --- |
+| `ipa` (required) | path relative to the repository root |
+| `working-directory` | `.` |
+| `build-command` | `""` |
+| `runs-on` | `macos-26` |
+| `xcode-version` | `""` (image default; otherwise `setup-xcode`) |
+| `timeout-minutes` | `90` |
+| `cancel-run-on-failure` | `true` |
+
+The `.p8` is written to `~/private_keys` for `altool` and removed when the step ends. The key
+bytes are not printed.
+
+## play.yml
+
+Uploads one signed Android App Bundle to Google Play. The caller signs the bundle. This
+workflow checks the JAR signature with `jarsigner -verify -strict` and then uploads with
+`r0adkll/upload-google-play` (pinned). The service-account JSON is a secret and is not printed.
+
+A pull request does not upload. `pull_request` and `pull_request_target` skip the check and
+the upload.
+
+```yaml
+jobs:
+  play:
+    uses: pyrlyn/ci/.github/workflows/play.yml@<sha> # main
+    permissions:
+      contents: read
+      actions: write
+    with:
+      aab: app/build/outputs/bundle/release/app-release.aab
+      package-name: app.mailune
+      track: internal
+    secrets: inherit
+```
+
+| Input | Default |
+| --- | --- |
+| `aab` (required) | path of the signed bundle, relative to the repository |
+| `package-name` (required) | Android application id |
+| `track` | `internal` (`alpha`, `beta`, `production`) |
+| `status` | `completed` (`draft`, `inProgress`, `halted`) |
+| `changes-not-sent-for-review` | `false` |
+| `runs-on` | `ubuntu-latest` |
+| `timeout-minutes` | `30` |
+| `cancel-run-on-failure` | `true` |
+
 ## dependabot-automerge.yml
 
 Unifies rtok/ketch/cox. The caller runs its CI and passes the result. Only Dependabot's own
@@ -960,23 +1169,25 @@ concurrency:
   group: dependabot-pr-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 jobs:
-  ci:
-    if: github.actor == 'dependabot[bot]'
-    uses: ./.github/workflows/ci.yml
-    permissions:
-      contents: read
   automerge:
-    needs: ci
-    if: ${{ !cancelled() && github.actor == 'dependabot[bot]' }}
+    if: >-
+      github.actor == 'dependabot[bot]'
+      && github.event.pull_request.user.login == 'dependabot[bot]'
+      && github.event.pull_request.head.repo.full_name == github.repository
     uses: pyrlyn/ci/.github/workflows/dependabot-automerge.yml@<sha> # main
     permissions:
       contents: write
       pull-requests: write
       actions: read
     with:
-      ci-result: ${{ needs.ci.result }}
-      wait-workflow: pipeline.yml
+      ci-result: success # the real gate is wait-workflow
+      wait-workflow: ci.yml # the workflow that reports the required checks
 ```
+
+Do not call the repository's CI (`uses: ./.github/workflows/ci.yml`) from this workflow: the
+Dependabot pull request already runs it through its own `pull_request` trigger, so the call is
+a second full CI run on the same commit. `wait-workflow` waits for that run and refuses to
+merge unless it is green (docs/migration/_common/dependabot.yml is the caller to copy).
 
 The repository must allow squash merges (the default method) and, for the review label, the
 token needs `pull-requests: write`.
@@ -1070,6 +1281,47 @@ In a cargo-dist `build-setup.yml`:
     certificate-password: ${{ secrets.MACOS_CERTIFICATE_PWD }}
     require: "true"
 ```
+
+## setup-rust (composite action)
+
+The Rust of the caller's `mise.toml` for a repository's own jobs (FFI builds, packaging,
+platform tests): `jdx/mise-action` installs it, `RUSTUP_TOOLCHAIN` makes it the active
+toolchain for every later rustup/cargo call, and the step fails when `rustc` is anything else
+(e.g. the runner image's stable). The same steps ci-rust.yml runs before clippy. Replaces the
+per-repository `.github/actions/rust` copies.
+
+| Input | Default | Notes |
+| --- | --- | --- |
+| `install-args` | `rust` | `mise install` arguments; must include `rust` (e.g. `rust node`) |
+| `working-directory` | `.` | directory with the mise.toml |
+| `targets` | `""` | extra rustup targets, space-separated |
+| `components` | `""` | extra rustup components, space-separated |
+| `cache` | `"false"` | `"true"` adds Swatinem/rust-cache (saved on the default branch) |
+| `cache-key` | `""` | extra rust-cache key |
+
+Output: `version` (the pinned rustc version).
+
+```yaml
+      - uses: actions/checkout@<sha> # v7.0.1
+      - uses: pyrlyn/ci/.github/actions/setup-rust@<sha> # main
+        with:
+          targets: wasm32-unknown-unknown
+```
+
+## commits (composite action)
+
+Conventional Commits subjects of a pull request's commits, from the base branch to HEAD: merge
+commits and git's own `Revert "..."` subjects are skipped, every offender is listed as an
+`::error::` before the step fails. Outside `pull_request` there is no range: a notice, success.
+Needs a checkout with `fetch-depth: 0`. ci.yml runs it as the `commits` check
+(`commits: {enabled: true}` in infra.yml); a repository whose ruleset requires a check named
+`commits` calls the action from its own `commits` job instead, so the name stays.
+
+| Input | Default | Notes |
+| --- | --- | --- |
+| `tool` | `grep` | `grep`: `type(scope)!: subject` with `types`; `commitlint`: the repository's commitlint config (`npm ci`, Node from mise.toml) |
+| `types` | `feat fix docs ci test chore style refactor perf build` | space-separated, `grep` only |
+| `working-directory` | `.` | package.json and the commitlint config (`commitlint` only) |
 
 ## setup-xcode (composite action)
 

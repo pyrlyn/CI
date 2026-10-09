@@ -1,0 +1,178 @@
+name: testflight
+
+# Reusable iOS TestFlight upload. The signing certificate is checked by the macos-sign action
+# (discover), the same Developer ID import the other Apple workflows use. The App Store Connect
+# API key is the same trio that action uses for notarization; altool uploads the IPA.
+#
+# A pull request never uploads. github.event_name inside a reusable workflow is the caller's
+# event, so a caller triggered by pull_request or pull_request_target skips the upload even if
+# it passes the secrets. The upload step also refuses those events if it is reached.
+#
+#   jobs:
+#     testflight:
+#       permissions:
+#         contents: read
+#         actions: write # cancel-run
+#       uses: pyrlyn/ci/.github/workflows/testflight.yml@<sha>
+#       with:
+#         ipa: build/Mailune.ipa
+#       secrets: inherit
+on:
+  workflow_call:
+    inputs:
+      ipa:
+        description: IPA to upload, relative to the repository root.
+        type: string
+        required: true
+      working-directory:
+        description: Directory the build command runs in, relative to the repository root.
+        type: string
+        required: false
+        default: "."
+      build-command:
+        description: Bash from working-directory that produces the IPA. Empty skips.
+        type: string
+        required: false
+        default: ""
+      runs-on:
+        description: macOS runner label.
+        type: string
+        required: false
+        default: macos-26
+      xcode-version:
+        description: >-
+          Xcode to select (.github/actions/setup-xcode), e.g. "26" or "27.1". Empty keeps the
+          runner image's default Xcode.
+        type: string
+        required: false
+        default: ""
+      timeout-minutes:
+        description: Timeout of the job.
+        type: number
+        required: false
+        default: 90
+      cancel-run-on-failure:
+        description: >-
+          When the job fails, cancel the whole workflow run. The calling job must grant
+          `actions: write`.
+        type: boolean
+        required: false
+        default: true
+    secrets:
+      MACOS_CERTIFICATE:
+        description: Base64 Developer ID Application .p12, checked by macos-sign.
+        required: false
+      MACOS_CERTIFICATE_PWD:
+        description: Password of MACOS_CERTIFICATE.
+        required: false
+      APPSTORE_CONNECT_KEY:
+        description: Base64 App Store Connect API key (.p8).
+        required: false
+      APPSTORE_CONNECT_KEY_ID:
+        description: Key ID of APPSTORE_CONNECT_KEY.
+        required: false
+      APPSTORE_CONNECT_ISSUER_ID:
+        description: Issuer ID of APPSTORE_CONNECT_KEY.
+        required: false
+
+permissions:
+  contents: read
+  actions: write # cancel-run on failure
+
+jobs:
+  testflight:
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Pull requests may still compile. They must not reach TestFlight.
+      - name: Decide whether this run may upload
+        id: gate
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            pull_request|pull_request_target)
+              echo "allow=false" >> "$GITHUB_OUTPUT"
+              echo "TestFlight upload skipped: a pull request does not upload"
+              ;;
+            *)
+              echo "allow=true" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
+      - name: Select Xcode ${{ inputs.xcode-version }}
+        if: inputs.xcode-version != ''
+        uses: $/.github/actions/setup-xcode # nosemgrep: github-actions-mutable-action-tag
+        with:
+          version: ${{ inputs.xcode-version }}
+
+      - name: Build
+        if: inputs.build-command != ''
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          BUILD_COMMAND: ${{ inputs.build-command }}
+        run: |
+          set -euo pipefail
+          eval "$BUILD_COMMAND"
+
+      # macos-sign deletes its throwaway keychain when the step ends. discover still proves the
+      # .p12 imports and exports the Developer ID hash the rest of the Apple tooling expects.
+      - name: Signing identity
+        if: steps.gate.outputs.allow == 'true'
+        uses: $/.github/actions/macos-sign # nosemgrep: github-actions-mutable-action-tag
+        with:
+          mode: discover
+          certificate: ${{ secrets.MACOS_CERTIFICATE }}
+          certificate-password: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          api-key: ${{ secrets.APPSTORE_CONNECT_KEY }}
+          api-key-id: ${{ secrets.APPSTORE_CONNECT_KEY_ID }}
+          api-issuer: ${{ secrets.APPSTORE_CONNECT_ISSUER_ID }}
+          require: "true"
+
+      - name: Upload to TestFlight
+        if: steps.gate.outputs.allow == 'true'
+        env:
+          IPA: ${{ inputs.ipa }}
+          EVENT_NAME: ${{ github.event_name }}
+          APPSTORE_CONNECT_KEY: ${{ secrets.APPSTORE_CONNECT_KEY }}
+          APPSTORE_CONNECT_KEY_ID: ${{ secrets.APPSTORE_CONNECT_KEY_ID }}
+          APPSTORE_CONNECT_ISSUER_ID: ${{ secrets.APPSTORE_CONNECT_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            pull_request|pull_request_target)
+              echo "refusing to upload to TestFlight from a pull request" >&2
+              exit 1
+              ;;
+          esac
+          missing=""
+          [ -n "$APPSTORE_CONNECT_KEY" ] || missing="$missing APPSTORE_CONNECT_KEY"
+          [ -n "$APPSTORE_CONNECT_KEY_ID" ] || missing="$missing APPSTORE_CONNECT_KEY_ID"
+          [ -n "$APPSTORE_CONNECT_ISSUER_ID" ] || missing="$missing APPSTORE_CONNECT_ISSUER_ID"
+          if [ -n "$missing" ]; then
+            echo "missing secrets:$missing" >&2
+            exit 1
+          fi
+          case "$IPA" in
+            /*|*..*) echo "ipa must be a relative path" >&2; exit 1 ;;
+          esac
+          [ -f "$IPA" ] || { echo "no IPA at $IPA" >&2; exit 1; }
+          [[ "$APPSTORE_CONNECT_KEY_ID" =~ ^[A-Za-z0-9]+$ ]] \
+            || { echo "APPSTORE_CONNECT_KEY_ID is not a key id" >&2; exit 1; }
+          # altool reads AuthKey_<id>.p8 from ~/private_keys. The key bytes are not printed.
+          dir="${HOME}/private_keys"
+          mkdir -p "$dir"
+          key="$dir/AuthKey_${APPSTORE_CONNECT_KEY_ID}.p8"
+          trap 'rm -f "$key"' EXIT
+          echo "$APPSTORE_CONNECT_KEY" | base64 --decode > "$key"
+          xcrun altool --upload-app --type ios -f "$IPA" \
+            --apiKey "$APPSTORE_CONNECT_KEY_ID" --apiIssuer "$APPSTORE_CONNECT_ISSUER_ID"
+
+      - name: Cancel the run on failure
+        if: failure() && inputs.cancel-run-on-failure
+        uses: $/.github/actions/cancel-run # nosemgrep: github-actions-mutable-action-tag

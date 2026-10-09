@@ -2,19 +2,22 @@ name: self-test
 
 # Runs ci-rust.yml against tests/fixtures/rust-crate through both toolchain paths: the
 # default shared matrix with Rust from mise.toml, and a one-entry matrix with an exact
-# rust-version (plus the MSRV job). `pipeline` runs the gated pipeline (ci-rust, CodeQL,
+# rust-version (plus the MSRV job), and `skip` (the shared matrix with no work, every target
+# on ubuntu-latest). `pipeline` runs the gated pipeline (ci-rust, CodeQL,
 # Semgrep, Snyk) on this repository. The extras run their safe paths: sonarcloud without a
 # token (skips), dependabot-automerge on a non-Dependabot PR (every job skips),
 # revert-on-failure as a dry run of this PR's commits, macos-sign without secrets (skips),
-# setup-xcode (Xcode 27 on xcode-27, a missing version fails, a no-op on Linux),
-# the changes action (table test plus a live run, docs_only included), the config action's
-# docs-only switch (table test; the `ci` job runs it live), ci-dotnet.yml without a .NET
-# project (no-op),
+# setup-xcode (Xcode 27 on xcode-27, a missing version fails, a no-op on Linux), setup-rust
+# (the fixture's pin, an extra target), the changes action (table test plus a live run,
+# docs_only included), the config action's docs-only switch and the license/commits toggles
+# (table test; the `ci` job runs it live, commits included), the commits action (table test),
+# ci-dotnet.yml without a .NET project (no-op),
 # failure-digest.sh against a fake gh, warnings-to-issues offline (fake gh and SonarCloud) and
 # as a live dry run on this repository's code scanning alerts (reads only, writes nothing).
 # A change to a reusable workflow or action is exercised before any caller pins it.
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
 # Only the newest run per workflow and ref executes: a new push cancels the older queued or
@@ -35,6 +38,7 @@ permissions:
 
 jobs:
   mise:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: mise.toml
     uses: ./.github/workflows/ci-rust.yml
     permissions:
@@ -44,6 +48,7 @@ jobs:
       working-directory: tests/fixtures/rust-crate
 
   rust-version:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: rust-version
     uses: ./.github/workflows/ci-rust.yml
     permissions:
@@ -58,6 +63,7 @@ jobs:
   # Package selection override on the binary-only member: no library, so the doctest step
   # must skip with a notice instead of failing.
   no-lib:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: no-lib
     uses: ./.github/workflows/ci-rust.yml
     permissions:
@@ -69,7 +75,22 @@ jobs:
       working-directory: tests/fixtures/rust-crate
       matrix: '[{"os": "ubuntu-latest", "target": "x86_64-unknown-linux-gnu"}]'
 
+  # `skip` over the shared four-target matrix: every target still reports under its name,
+  # and all of them run their no-op steps on `skip-runs-on` (ubuntu-latest), so no macOS
+  # (xcode-27), Windows or ARM runner is started.
+  skip:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    name: skip
+    uses: ./.github/workflows/ci-rust.yml
+    permissions:
+      contents: read
+      actions: write # cancel-run on failure
+    with:
+      skip: true
+      working-directory: tests/fixtures/rust-crate
+
   pipeline:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: pipeline
     uses: ./.github/workflows/pipeline.yml
     permissions:
@@ -93,6 +114,7 @@ jobs:
 
   # lint.yml through workflow_call: its called-path concurrency group (never cancels).
   lint:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: lint
     uses: ./.github/workflows/lint.yml
     permissions:
@@ -101,6 +123,7 @@ jobs:
 
   # The config-driven entrypoint with tests/fixtures/infra.yml.
   ci:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: ci
     uses: ./.github/workflows/ci.yml
     permissions:
@@ -111,7 +134,37 @@ jobs:
     with:
       config-file: tests/fixtures/infra.yml
 
+  # The setup-rust action with the fixture's mise.toml pin, an extra target and the cache.
+  setup-rust:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    name: setup-rust
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: rust
+        uses: ./.github/actions/setup-rust
+        with:
+          working-directory: tests/fixtures/rust-crate
+          targets: wasm32-unknown-unknown
+          cache: "true"
+          cache-key: setup-rust
+      - name: The pin is active, with the extra target
+        working-directory: tests/fixtures/rust-crate
+        env:
+          VERSION: ${{ steps.rust.outputs.version }}
+        run: |
+          set -euo pipefail
+          test "$VERSION" = 1.98.1
+          test "$RUSTUP_TOOLCHAIN" = 1.98.1
+          rustc --version | grep -q '^rustc 1\.98\.1 '
+          rustup target list --installed | grep -qx wasm32-unknown-unknown
+          cargo check --locked --workspace --target wasm32-unknown-unknown
+
   sonarcloud:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: sonarcloud
     uses: ./.github/workflows/sonarcloud.yml
     permissions:
@@ -125,6 +178,7 @@ jobs:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
   dependabot-automerge:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: dependabot-automerge
     uses: ./.github/workflows/dependabot-automerge.yml
     permissions:
@@ -136,6 +190,7 @@ jobs:
       wait-workflow: self-test.yml
 
   revert-on-failure:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: revert-on-failure (dry run)
     runs-on: ubuntu-latest
     steps:
@@ -159,6 +214,7 @@ jobs:
 
   # The changes action: the offline table test, then a live run on this event.
   changes:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: changes
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -169,6 +225,10 @@ jobs:
       - run: bash tests/changes/test.sh
       # The config action's docs-only switch (normalize.py), offline.
       - run: bash tests/config/test.sh
+      # The commits action's script on a scratch repository, offline.
+      - run: bash tests/commits/test.sh
+      # pin-sync's rewrite and template rendering on a scratch checkout, offline.
+      - run: bash tests/pin-sync/test.sh
       - id: live
         uses: ./.github/actions/changes
       - name: Live outputs are booleans
@@ -186,6 +246,7 @@ jobs:
 
   # The daily failure digest and the shared issue script, offline against a fake gh.
   failure-digest:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: failure-digest
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -197,6 +258,7 @@ jobs:
 
   # warnings-to-issues: the script offline against a fake gh and a local fake SonarCloud.
   warnings-to-issues-test:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: warnings-to-issues (offline)
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -209,6 +271,7 @@ jobs:
   # The reusable workflow live, as a dry run: reads this repository's alerts and warning
   # issues, prints the plan in the job summary, writes nothing.
   warnings-to-issues:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: warnings-to-issues (dry run)
     uses: ./.github/workflows/warnings-to-issues.yml
     permissions:
@@ -220,6 +283,7 @@ jobs:
 
   # No .NET project here: the job must run, do nothing and pass.
   dotnet:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: dotnet (no project)
     uses: ./.github/workflows/ci-dotnet.yml
     permissions:
@@ -227,6 +291,7 @@ jobs:
       actions: write # cancel-run on failure
 
   macos-sign:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: macos-sign (no secrets)
     runs-on: xcode-27
     steps:
@@ -245,6 +310,7 @@ jobs:
         run: '[ "$SIGNED" = "false" ]'
 
   setup-xcode:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: setup-xcode (${{ matrix.os }})
     strategy:
       fail-fast: false

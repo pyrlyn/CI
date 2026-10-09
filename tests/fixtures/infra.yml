@@ -23,6 +23,9 @@ snyk:
   enabled: false
 lint:
   enabled: false
+# The commits check on this pull request's own commits (Conventional Commits).
+commits:
+  enabled: true
 jobs:
   - name: echo
     mise: false

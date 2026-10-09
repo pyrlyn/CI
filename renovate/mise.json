@@ -1,0 +1,26 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "pyrlyn shared Renovate preset: mise tools only. Cargo and GitHub Actions stay with Dependabot.",
+  "enabledManagers": ["mise"],
+  "ignorePaths": ["**/node_modules/**", "**/tests/fixtures/**", "**/__fixtures__/**"],
+  "dependencyDashboard": false,
+  "labels": ["dependencies"],
+  "semanticCommits": "enabled",
+  "semanticCommitType": "chore",
+  "semanticCommitScope": "mise",
+  "minimumReleaseAge": "7 days",
+  "prHourlyLimit": 0,
+  "prConcurrentLimit": 10,
+  "schedule": ["at any time"],
+  "packageRules": [
+    {
+      "description": "One PR per repository for all mise tool updates; majors get their own PR.",
+      "matchManagers": ["mise"],
+      "groupName": "mise tools"
+    }
+  ],
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["at any time"]
+  }
+}

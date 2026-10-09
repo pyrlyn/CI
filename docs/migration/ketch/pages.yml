@@ -8,6 +8,7 @@ on:
     paths: ["site/**", "docs/**", "*.md", "package.json", "package-lock.json", ".github/workflows/pages.yml"]
   pull_request:
     paths: ["site/**", "docs/**", "*.md", "package.json", "package-lock.json", ".github/workflows/pages.yml"]
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
 concurrency:

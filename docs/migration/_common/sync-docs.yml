@@ -28,5 +28,6 @@ jobs:
     #   extra-excludes: |
     #     compat.md
     #     i18n.md
+    #   locales: ru uk # docs/<lang>/ translations and localized site.md cards
     secrets:
       SITE_DEPLOY_KEY: ${{ secrets.SITE_DEPLOY_KEY }}
