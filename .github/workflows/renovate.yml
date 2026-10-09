@@ -1,0 +1,99 @@
+name: renovate
+
+# Self-hosted Renovate for the pyrlyn organization, mise only: it updates the tools pinned in
+# mise.toml (every variant) and keeps mise.lock current, while Cargo and GitHub Actions stay
+# with Dependabot. Repositories need no file of their own: renovate/global.json discovers every
+# repository the GitHub App is installed on (pyrlyn/*), skips onboarding and applies the shared
+# preset renovate/mise.json. See docs/renovate.md.
+#
+# Needs the GitHub App secrets RENOVATE_APP_CLIENT_ID and RENOVATE_APP_PRIVATE_KEY. Without
+# them a scheduled run is skipped with a warning and a manual run fails with a clear error.
+#
+# 03:00 UTC on Monday is 06:00 in Kyiv in summer (EEST) and 05:00 in winter (EET).
+on:
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: >-
+          Renovate dryRun: `off` for a real run, `extract` (dependencies only), `lookup` (plus
+          available updates) or `full` (log the branches and PRs instead of writing them).
+        type: choice
+        options: ["off", extract, lookup, full]
+        default: "off"
+      log-level:
+        description: Renovate log level.
+        type: choice
+        options: [info, debug]
+        default: info
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  renovate:
+    if: github.repository == 'pyrlyn/ci'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      # `secrets` cannot be used in a step `if`; expose only whether the app is configured.
+      HAS_APP: >-
+        ${{ secrets.RENOVATE_APP_CLIENT_ID != '' && secrets.RENOVATE_APP_PRIVATE_KEY != '' }}
+    steps:
+      - name: Check the GitHub App secrets
+        id: creds
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$HAS_APP" = true ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "ok=false" >> "$GITHUB_OUTPUT"
+          msg="RENOVATE_APP_CLIENT_ID and RENOVATE_APP_PRIVATE_KEY are not set;"
+          msg+=" see docs/renovate.md."
+          if [ "$EVENT" = schedule ]; then
+            echo "::warning title=Renovate skipped::$msg"
+            exit 0
+          fi
+          echo "::error title=Renovate secrets missing::$msg"
+          exit 1
+      - if: steps.creds.outputs.ok == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: GitHub App token
+        id: app
+        if: steps.creds.outputs.ok == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.RENOVATE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+          # Every repository of the installation, not only this one.
+          owner: pyrlyn
+      # RENOVATE_DRY_RUN is exported only for a dry run; a scheduled run has no inputs.
+      - name: Run options
+        if: steps.creds.outputs.ok == 'true'
+        env:
+          DRY_RUN: ${{ inputs.dry-run }}
+        run: |
+          set -euo pipefail
+          if [ -n "$DRY_RUN" ] && [ "$DRY_RUN" != off ]; then
+            echo "RENOVATE_DRY_RUN=$DRY_RUN" >> "$GITHUB_ENV"
+          fi
+      # renovate-version is left at the action's default (the current Renovate major); it moves
+      # with the action pin, which Dependabot bumps (.github/dependabot.yml).
+      - name: Renovate
+        if: steps.creds.outputs.ok == 'true'
+        uses: renovatebot/github-action@230ce922b08968d0a4f6f70f295601daff09ef1d # v46.3.7
+        env:
+          LOG_LEVEL: ${{ inputs.log-level || 'info' }}
+        with:
+          configurationFile: renovate/global.json
+          token: ${{ steps.app.outputs.token }}
