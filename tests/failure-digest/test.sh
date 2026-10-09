@@ -94,7 +94,8 @@ f="$tmp/fake"
   run 15 Nightly schedule main 2026-09-30T07:00:00Z timed_out; echo ,
   run 16 Nightly schedule main 2026-10-01T03:00:00Z failure; echo ,
   run 17 CI push main 2026-10-01T02:00:00Z success; echo ,
-  run 18 Docs pull_request_target main 2026-10-01T02:00:00Z failure
+  run 18 Docs pull_request_target main 2026-10-01T02:00:00Z failure; echo ,
+  run 19 Nightly schedule feature/x 2026-10-01T03:00:00Z failure
   echo ']}'
 } >"$f/pyrlyn_rtok/runs.json"
 echo v1.2.0 >"$f/pyrlyn_rtok/tags"
@@ -115,14 +116,13 @@ echo "$out" >"$tmp/digest.md"
 for want in '@listepo failures in the last 24h (since 2026-09-30 09:00 EEST):' \
   '### pyrlyn/rtok' '### pyrlyn/ketch' '### pyrlyn/cox' \
   '- **CI** on `main` (push), 2026-10-01 08:10 EEST: [run](https://github.com/x/actions/runs/11); failed jobs: test (ubuntu), test (macos)' \
-  '- **Release** on `v1.2.0` (push), 2026-09-30 23:00 EEST: [run](https://github.com/x/actions/runs/14); failed jobs: build' \
   '[run](https://github.com/x/actions/runs/15); failed jobs: none listed (timed_out)' \
   '[run](https://github.com/x/actions/runs/16)' \
   '- Release failure issue: [#42 Release failed: release v0.9.1](https://github.com/pyrlyn/ketch/issues/42)' \
   '- **release-plz** on `main` (workflow_dispatch), 2026-10-01 04:00 EEST: [run](https://github.com/x/actions/runs/31); failed jobs: none listed (startup_failure)'; do
   if has "$tmp/digest.md" "$want"; then ok "digest has: ${want:0:60}"; else bad "digest lacks: $want"; fi
 done
-for unwanted in 'pyrlyn/ci' 'pyrlyn/runa' 'runs/12)' 'runs/13)' 'runs/17)' 'runs/18)' 'runs/51)' 'green'; do
+for unwanted in 'pyrlyn/ci' 'pyrlyn/runa' 'v1.2.0' 'runs/14)' 'runs/12)' 'runs/13)' 'runs/17)' 'runs/18)' 'runs/19)' 'runs/51)' 'green'; do
   if has "$tmp/digest.md" "$unwanted"; then bad "digest must not have: $unwanted"; else ok "digest omits: $unwanted"; fi
 done
 expect "24h window in the runs query" has "$f/log" 'created=>=2026-09-30T06:00:00Z'

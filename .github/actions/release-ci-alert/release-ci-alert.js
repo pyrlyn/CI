@@ -4,7 +4,11 @@ module.exports = async ({ github, context, core }) => {
   // Comment on a release pull request whose CI failed: failed jobs, steps and log tails,
   // mentioning the maintainer. Pull requests that are not release PRs get nothing.
   // Env: MAINTAINER, TAIL_LINES.
-  const maintainer = process.env.MAINTAINER || 'listepo';
+  const maintainer = process.env.MAINTAINER || '';
+  if (!maintainer) {
+    core.info('No maintainer set: release CI alerts are off.');
+    return;
+  }
   const tailLines = Number(process.env.TAIL_LINES || '30');
   const { owner, repo } = context.repo;
   const run = context.payload.workflow_run;

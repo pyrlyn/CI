@@ -1,0 +1,44 @@
+name: main-failure
+description: >-
+  CI failure notification for the main branch only: on a failed run, open (or comment on) one
+  `ci-main-failure` issue per workflow that mentions and assigns the maintainer; on a green run,
+  close it. The caller limits it to push, schedule and workflow_dispatch runs on main; pull
+  requests and other branches never notify. Needs `issues: write`.
+inputs:
+  needs:
+    description: "`toJSON(needs)` of the calling job; must include the gate job."
+    required: true
+  gate:
+    description: Id of the gate job inside `needs` (its result decides green or failed).
+    required: false
+    default: gate
+  maintainer:
+    description: GitHub login mentioned and assigned.
+    required: false
+    default: listepo
+  label:
+    description: Issue label (created when missing).
+    required: false
+    default: ci-main-failure
+  token:
+    description: "Token with `issues: write`."
+    required: false
+    default: ${{ github.token }}
+runs:
+  using: composite
+  steps:
+    - name: Open, update or close the ci-main-failure issue
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        GH_REPO: ${{ github.repository }}
+        NEEDS: ${{ inputs.needs }}
+        GATE: ${{ inputs.gate }}
+        WHO: ${{ inputs.maintainer }}
+        LABEL: ${{ inputs.label }}
+        WORKFLOW: ${{ github.workflow }}
+        RUN_ID: ${{ github.run_id }}
+        RUN_ATTEMPT: ${{ github.run_attempt }}
+        SHA: ${{ github.sha }}
+        BRANCH: ${{ github.ref_name }}
+      run: bash "$GITHUB_ACTION_PATH/main-failure.sh"

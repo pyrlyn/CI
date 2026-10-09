@@ -3,8 +3,8 @@ description: >-
   Turn a failed release run into a GitHub issue in the same repository, labeled
   `release-failure`, mentioning and assigning the maintainer, with the run link and the failed
   job names. An open `release-failure` issue for the same ref gets a comment instead of a
-  duplicate. GitHub has no per-workflow notification filter, so this is how a release failure
-  (and only a release failure) reaches the maintainer. Needs `issues: write` and
+  duplicate. Only a run on `branch` (default main; a tag whose commit is on it counts) notifies;
+  pull request runs and other branches post nothing. Empty `maintainer` turns it off. Needs `issues: write` and
   `actions: read` on the job; runs on any runner with `gh` and `jq` (GitHub-hosted ones).
 inputs:
   ref:
@@ -37,6 +37,11 @@ inputs:
     description: GitHub login mentioned and assigned.
     required: false
     default: listepo
+  branch:
+    description: >-
+      The only branch whose failed runs notify; a tag counts when its commit is on it.
+    required: false
+    default: main
   label:
     description: Label on the issue (created when missing).
     required: false
@@ -48,7 +53,18 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Check that the run is on ${{ inputs.branch }}
+      id: on-main
+      if: inputs.maintainer != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        GH_REPO: ${{ github.repository }}
+        SHA: ${{ inputs.sha || github.sha }}
+        BRANCH: ${{ inputs.branch }}
+      run: echo "notify=$(bash "$GITHUB_ACTION_PATH/on-main.sh")" >> "$GITHUB_OUTPUT"
     - name: Open or update the release-failure issue
+      if: steps.on-main.outputs.notify == 'true'
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token }}

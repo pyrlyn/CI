@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Daily failure digest: one @mention comment on the "Daily failure digest" issue of $GH_REPO
-# listing, per repository, what failed in the last $SINCE_HOURS hours: failed workflow runs
-# (failure, timed_out, startup_failure) of default-branch pushes, tag pushes, schedule,
-# workflow_dispatch, release and workflow_run events (pull requests do not count), and open
-# release-failure issues with activity in the window. Only failing repositories are listed;
+# listing, per repository, what failed in the last $SINCE_HOURS hours on the default branch
+# only: failed workflow runs (failure, timed_out, startup_failure) of push, schedule,
+# workflow_dispatch and workflow_run events on the default branch (pull requests, other
+# branches and tags do not count), and open release-failure issues with activity in the window. Only failing repositories are listed;
 # when nothing failed anywhere it posts nothing at all.
 #
 # Env: REPOS (owner/name list, separated by spaces, commas or newlines), GH_REPO (where the
@@ -40,16 +40,13 @@ for repo in "${repos[@]}"; do
       | select(.conclusion == "failure" or .conclusion == "timed_out"
         or .conclusion == "startup_failure")
       | select(.event == "push" or .event == "schedule" or .event == "workflow_dispatch"
-        or .event == "release" or .event == "workflow_run")
+        or .event == "workflow_run")
       | [.id, .run_attempt, .name, .event, .head_branch, .html_url, .created_at, .conclusion]
       | @tsv' >"$tmp/runs"
   : >"$tmp/section"
   while IFS=$'\t' read -r id attempt name event ref url created conclusion; do
-    # A push counts on the default branch or a tag; other branches are work in progress.
-    if [ "$event" = push ] && [ "$ref" != "$default" ] \
-      && ! gh api "repos/$repo/git/ref/tags/$ref" >/dev/null 2>&1; then
-      continue
-    fi
+    # Only the default branch notifies; other branches and tags are not main.
+    [ "$ref" = "$default" ] || continue
     jobs="$(gh api --paginate "repos/$repo/actions/runs/$id/attempts/$attempt/jobs?per_page=100" \
       --jq '.jobs[] | select(.conclusion == "failure" or .conclusion == "timed_out") | .name' \
       2>/dev/null | paste -sd, - | sed 's/,/, /g' || true)"

@@ -589,9 +589,9 @@ jobs:
           gh pr close "$PR" -R "$R" --comment "$msg"
           gh api -X DELETE "repos/$R/git/refs/heads/$BRANCH" >/dev/null || true
 
-  # A failed bump opens (or comments on) a `release-failure` issue that mentions and assigns the
-  # maintainer: the only failure notification, since GitHub cannot filter Actions
-  # notifications per workflow.
+  # A failed bump on main (a tag on main counts) opens (or comments on) a `release-failure`
+  # issue that mentions and assigns the maintainer; other branches and pull requests post
+  # nothing (the notify-release-failure action checks the ref).
   notify-failure:
     name: notify on failure
     needs: [bump]
