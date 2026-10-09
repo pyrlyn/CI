@@ -2,7 +2,7 @@
 version: 1
 
 rust:
-  enabled: true # shared five-target matrix (Windows included)
+  enabled: true # shared four-target matrix (Windows included)
   clippy-args: --locked
   tools: nextest
   test-command: |

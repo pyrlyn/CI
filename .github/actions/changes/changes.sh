@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # The predicates below are called through `flag`, which shellcheck cannot follow.
 # shellcheck disable=SC2329
-# Classify changed files by ecosystem; see action.yml. Writes key=value lines to
-# $GITHUB_OUTPUT (stdout when unset) and a table to $GITHUB_STEP_SUMMARY.
+# Classify changed files by ecosystem, and whether they are documentation only; see
+# action.yml. Writes key=value lines to $GITHUB_OUTPUT (stdout when unset) and a table to
+# $GITHUB_STEP_SUMMARY.
 #
 # Test hook (self-test.yml, local runs): CHANGED_FILES_FILE and TREE_FILES_FILE name files
 # with one path per line and replace the API calls; EVENT still decides whether a diff counts.
@@ -18,6 +19,9 @@ SWIFT_SRC_RE='\.(swift|m|mm|metal|xcconfig|entitlements|xcstrings|storyboard|xib
 DOTNET_SRC_RE='\.(cs|fs|fsi|fsx|vb|razor|cshtml|xaml|resx|props|targets|sln|slnx|runsettings)$|(^|/)\.config/dotnet-tools\.json$'
 # CI and toolchain pins: every ecosystem runs in full.
 FORCE_RE='^\.github/|(^|/)\.?mise\.toml$|(^|/)\.tool-versions$'
+# Documentation: Markdown in any directory (`DOCS_PATHS` adds more), minus the `NOT_DOCS_PATHS`
+# matches (Markdown that is code: embedded in a binary, run by a test, read by a release).
+DOCS_RE='\.md$'
 # Project markers in the tree at HEAD.
 RUST_PRESENT_RE='(^|/)Cargo\.toml$'
 SWIFT_PRESENT_RE='(^|/)Package\.swift$|\.xcodeproj/'
@@ -114,6 +118,27 @@ swift=$(flag any "$swift_deps" "$SWIFT_SRC_RE" "${SWIFT_PATHS:-}")
 dotnet=$(flag any "$dotnet_deps" "$DOTNET_SRC_RE" "${DOTNET_PATHS:-}" i)
 
 full() { [ "$forced" = true ] || [ "$1" = true ]; }
+
+# docs_only: a diff exists, nothing forced it, and every changed path (both sides of a rename)
+# is documentation. The `git diff --name-only BASE...HEAD` of the pull request, file by file.
+is_doc() { # <path>
+  printf '%s\n' "$1" >"$tmp/one"
+  { matches "$tmp/one" "$DOCS_RE" i || extra "$tmp/one" "${DOCS_PATHS:-}"; } \
+    && ! extra "$tmp/one" "${NOT_DOCS_PATHS:-}"
+}
+docs_only=false
+not_doc=""
+if [ "$forced" = false ] && [ -s "$changed" ]; then
+  docs_only=true
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    if ! is_doc "$f"; then
+      docs_only=false
+      not_doc="$f"
+      break
+    fi
+  done <"$changed"
+fi
 present() { [ "$tree_ok" = false ] || matches "$tree" "$1" "${2:-}"; }
 
 files=""
@@ -136,6 +161,7 @@ out="${GITHUB_OUTPUT:-/dev/stdout}"
   echo "dotnet_deps=$dotnet_deps"
   echo "dotnet_full=$(flag full "$dotnet_deps")"
   echo "dotnet_present=$(flag present "$DOTNET_PRESENT_RE" i)"
+  echo "docs_only=$docs_only"
 } >>"$out"
 
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
@@ -148,6 +174,12 @@ if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
     echo "| Rust | $rust | $rust_deps |"
     echo "| Swift | $swift | $swift_deps |"
     echo "| .NET | $dotnet | $dotnet_deps |"
+    echo
+    if [ "$docs_only" = true ]; then
+      echo "Documentation only: every changed file is documentation."
+    elif [ -n "$not_doc" ]; then
+      echo "Not documentation only: \`$not_doc\`."
+    fi
   } >>"$GITHUB_STEP_SUMMARY"
 fi
 [ "$forced" = false ] || echo "::notice title=changes::every ecosystem runs in full: $reason"

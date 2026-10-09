@@ -1,0 +1,66 @@
+name: license-tests
+
+# fmt, clippy and the tests of tools/license-kit (license drift check, sync against an
+# in-memory GitHub, README block, sync config, CLA workflow config, auto-merge decision), all
+# offline. Runs when the tool, the canonical files or the license workflows change.
+on:
+  pull_request:
+    paths:
+      - tools/license-kit/**
+      - licenses/**
+      - LICENSE
+      - .github/workflows/license-*.yml
+      - .github/workflows/cla*.yml
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+    paths:
+      - tools/license-kit/**
+      - licenses/**
+      - LICENSE
+      - .github/workflows/license-*.yml
+      - .github/workflows/cla*.yml
+  workflow_dispatch:
+
+# Not callable: the newest run per ref wins.
+# A push to the default branch (a merge into main) never cancels or is superseded: it gets a
+# group of its own run.
+concurrency:
+  group: >-
+    ${{ github.workflow }}-${{
+    github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    && github.run_id || github.ref }}
+  cancel-in-progress: >-
+    ${{ github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
+
+permissions:
+  contents: read
+  actions: write # cancel-run on failure
+
+defaults:
+  run:
+    working-directory: tools/license-kit
+
+jobs:
+  license-kit:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    name: license-kit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: tools/license-kit -> target
+          shared-key: license-kit
+      - name: rustfmt
+        run: cargo fmt --check
+      - name: clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Tests
+        run: cargo test --locked --no-fail-fast -- --nocapture
+      - name: Cancel the run on failure
+        if: failure()
+        uses: ./.github/actions/cancel-run

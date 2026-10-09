@@ -1,6 +1,11 @@
 # self-test config for ci.yml: Rust CI on the fixture crate, CodeQL on workflows only,
 # Semgrep/Snyk/SonarCloud/lint off (covered by other self-test jobs), two custom jobs.
 version: 1
+# Exercises the config action's docs-only path live: a pull request changing only Markdown
+# skips the heavy checks below, as in a consumer; any other change (this file, a workflow)
+# still runs everything.
+docs-only:
+  enabled: true
 rust:
   enabled: true
   working-directory: tests/fixtures/rust-crate
@@ -18,6 +23,9 @@ snyk:
   enabled: false
 lint:
   enabled: false
+# The commits check on this pull request's own commits (Conventional Commits).
+commits:
+  enabled: true
 jobs:
   - name: echo
     mise: false

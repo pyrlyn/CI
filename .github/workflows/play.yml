@@ -1,0 +1,142 @@
+name: play
+
+# Reusable upload of an already signed Android App Bundle to Google Play. The caller signs
+# the bundle; this workflow checks that signature and uploads it. A pull request never
+# uploads: github.event_name here is the caller's event, and the upload step refuses
+# pull_request and pull_request_target if it is reached.
+#
+# Secret (callers pass it with `secrets: inherit`):
+#   PLAY_SERVICE_ACCOUNT_JSON - the Play Console service-account key, as JSON text.
+#   It is handed to the upload action and is not printed.
+#
+#   jobs:
+#     play:
+#       permissions:
+#         contents: read
+#         actions: write # cancel-run
+#       uses: pyrlyn/ci/.github/workflows/play.yml@<sha>
+#       with:
+#         aab: app/build/outputs/bundle/release/app-release.aab
+#         package-name: app.mailune
+#         track: internal
+#       secrets: inherit
+on:
+  workflow_call:
+    inputs:
+      aab:
+        description: Signed Android App Bundle, relative to the repository root.
+        type: string
+        required: true
+      package-name:
+        description: Android application id.
+        type: string
+        required: true
+      track:
+        description: Play track (internal, alpha, beta, production).
+        type: string
+        required: false
+        default: internal
+      status:
+        description: Release status (completed, draft, inProgress, halted).
+        type: string
+        required: false
+        default: completed
+      changes-not-sent-for-review:
+        description: Leave the edit unsubmitted for review.
+        type: boolean
+        required: false
+        default: false
+      runs-on:
+        description: Runner label. Needs a JDK so jarsigner can check the bundle.
+        type: string
+        required: false
+        default: ubuntu-latest
+      timeout-minutes:
+        description: Timeout of the job.
+        type: number
+        required: false
+        default: 30
+      cancel-run-on-failure:
+        description: >-
+          When the job fails, cancel the whole workflow run. The calling job must grant
+          `actions: write`.
+        type: boolean
+        required: false
+        default: true
+    secrets:
+      PLAY_SERVICE_ACCOUNT_JSON:
+        description: Play Console service-account JSON. Not printed.
+        required: false
+
+permissions:
+  contents: read
+  actions: write # cancel-run on failure
+
+jobs:
+  play:
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Decide whether this run may upload
+        id: gate
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            pull_request|pull_request_target)
+              echo "allow=false" >> "$GITHUB_OUTPUT"
+              echo "Play upload skipped: a pull request does not upload"
+              ;;
+            *)
+              echo "allow=true" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
+      # An App Bundle is a signed jar. An unsigned file is not uploaded.
+      - name: Check the bundle is signed
+        if: steps.gate.outputs.allow == 'true'
+        env:
+          AAB: ${{ inputs.aab }}
+          PACKAGE_NAME: ${{ inputs.package-name }}
+          TRACK: ${{ inputs.track }}
+          STATUS: ${{ inputs.status }}
+        run: |
+          set -euo pipefail
+          case "$AAB" in
+            /*|*..*) echo "aab must be a relative path" >&2; exit 1 ;;
+          esac
+          [ -f "$AAB" ] || { echo "no bundle at $AAB" >&2; exit 1; }
+          [[ "$PACKAGE_NAME" =~ ^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$ ]] \
+            || { echo "package-name is not an application id" >&2; exit 1; }
+          case "$TRACK" in
+            internal|alpha|beta|production) ;;
+            *) echo "track must be internal, alpha, beta, or production" >&2; exit 1 ;;
+          esac
+          case "$STATUS" in
+            completed|draft|inProgress|halted) ;;
+            *) echo "status is not a Play release status" >&2; exit 1 ;;
+          esac
+          jarsigner -verify -strict "$AAB"
+
+      - name: Upload to Play
+        if: >-
+          steps.gate.outputs.allow == 'true'
+          && github.event_name != 'pull_request'
+          && github.event_name != 'pull_request_target'
+        uses: r0adkll/upload-google-play@e738b9dd8f2476ea806d921b64aacd24f34515a5 # v1.1.5
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: ${{ inputs.package-name }}
+          releaseFiles: ${{ inputs.aab }}
+          track: ${{ inputs.track }}
+          status: ${{ inputs.status }}
+          changesNotSentForReview: ${{ inputs.changes-not-sent-for-review }}
+
+      - name: Cancel the run on failure
+        if: failure() && inputs.cancel-run-on-failure
+        uses: $/.github/actions/cancel-run # nosemgrep: github-actions-mutable-action-tag

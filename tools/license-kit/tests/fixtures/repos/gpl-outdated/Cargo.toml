@@ -1,0 +1,4 @@
+[package]
+name = "gpl-outdated"
+version = "0.1.0"
+license = "GPL-3.0-only OR LicenseRef-Commercial"

@@ -14,17 +14,35 @@ name: ci-rust
 # toolchain through rustup instead. Either way the pinned version is exported as
 # RUSTUP_TOOLCHAIN and every job fails if `rustc --version` is anything else.
 #
+# macOS jobs select the pinned Xcode (`xcode-version`, default 27) through the setup-xcode
+# action and fail when the runner has none; the shared matrix runs them on `xcode-27`, the
+# GitHub image that ships Xcode 27 (macos-latest / macos-26 carry Xcode 26.x).
+#
 # A failed job cancels the whole run (`cancel-run-on-failure`, on by default).
 #
 # `plan` classifies the changed files (the `changes` action). A change to any Cargo.toml or
 # Cargo.lock forces the full suite: `full-package-args` replaces `package-args`, and
 # `changed-only` cannot skip anything. With `changed-only` (off by default) a pull request
 # or push without Rust changes turns the work into no-ops; the jobs still report success
-# under their usual names, so required checks never wait on a skipped matrix.
+# under their usual names, so required checks never wait on a skipped matrix. `skip` does the
+# same unconditionally, e.g. for a docs-only pull request (the config action's `docs-only`).
+# Without work, every matrix entry runs on `skip-runs-on` (ubuntu-latest) instead of its own
+# runner, so a docs-only change never starts a macOS (Xcode), Windows or ARM runner; the
+# check names (`matrix.target`) stay the same. The matrix job itself is never skipped at job
+# level: that reports one check under the raw expression name and a required target waits.
 # Caller job permissions: contents: read, actions: write.
 on:
   workflow_call:
     inputs:
+      skip-drafts:
+        description: >-
+          Skip every job on a draft pull request: a job-level `if`, so no runner starts. The
+          caller's `pull_request` trigger must list `ready_for_review` in `types` so the run
+          starts when the draft is marked ready. false runs drafts like any other pull request
+          (ci.yml passes its `skip-drafts` config key).
+        type: boolean
+        required: false
+        default: true
       cancel-run-on-failure:
         description: >-
           When a job fails, cancel the whole workflow run (every other running or queued
@@ -48,6 +66,14 @@ on:
         type: string
         required: false
         default: ""
+      xcode-version:
+        description: >-
+          Xcode that macOS jobs select (.github/actions/setup-xcode): a major ("27") or
+          major.minor ("27.1"); the job fails when the runner has none. Empty keeps the
+          runner image's default Xcode.
+        type: string
+        required: false
+        default: "27"
       fmt-runs-on:
         description: Runner label for the fmt job.
         type: string
@@ -70,6 +96,15 @@ on:
         type: string
         required: false
         default: ""
+      locked:
+        description: >-
+          auto | true | false. Pass --locked (LOCKED_ARGS) to clippy, check, the doctests and
+          the default test-command and build-command, so a stale Cargo.lock fails instead of
+          being rewritten. auto: only when the workspace has a Cargo.lock. clippy-args that
+          already hold --locked are not given a second one.
+        type: string
+        required: false
+        default: auto
       tools:
         description: >-
           Comma-separated tools installed with taiki-e/install-action before the tests
@@ -87,11 +122,11 @@ on:
       test-command:
         description: >-
           Bash that runs the tests on entries the runner can execute natively. Empty skips
-          the tests. PACKAGE_ARGS and FEATURE_ARGS are set. `--all-targets` does not run
-          doctests; the `doc-tests` step does.
+          the tests. PACKAGE_ARGS, FEATURE_ARGS and LOCKED_ARGS are set. `--all-targets` does
+          not run doctests; the `doc-tests` step does.
         type: string
         required: false
-        default: cargo test $PACKAGE_ARGS --all-targets $FEATURE_ARGS
+        default: cargo test $PACKAGE_ARGS --all-targets $FEATURE_ARGS $LOCKED_ARGS
       doc-tests:
         description: >-
           Also run `cargo test $PACKAGE_ARGS --doc $FEATURE_ARGS` where the tests run. A
@@ -101,11 +136,12 @@ on:
         default: true
       build-command:
         description: >-
-          Bash that builds a cross target the runner cannot execute. TARGET, PACKAGE_ARGS and
-          FEATURE_ARGS are set.
+          Bash that builds a cross target the runner cannot execute. TARGET, PACKAGE_ARGS,
+          FEATURE_ARGS and LOCKED_ARGS are set.
         type: string
         required: false
-        default: cargo build $PACKAGE_ARGS --all-targets $FEATURE_ARGS --target "$TARGET"
+        default: >-
+          cargo build $PACKAGE_ARGS --all-targets $FEATURE_ARGS $LOCKED_ARGS --target "$TARGET"
       package-args:
         description: >-
           Package selection for clippy, check, the tests and the MSRV check. Default
@@ -153,6 +189,23 @@ on:
         type: boolean
         required: false
         default: false
+      skip:
+        description: >-
+          Skip the work (not the check names) whatever changed, e.g. on a docs-only pull
+          request (`docs-only` from the config action). fmt and msrv report skipped, every
+          matrix job reports success.
+        type: boolean
+        required: false
+        default: false
+      skip-runs-on:
+        description: >-
+          Runner label for every matrix entry when the jobs do no work (`skip`, or
+          `changed-only` without a Rust change): their steps are no-ops, so no macOS
+          (Xcode), Windows or ARM runner is started for them. The check names do not change.
+          Empty keeps each entry's own `os`.
+        type: string
+        required: false
+        default: ubuntu-latest
       full-package-args:
         description: >-
           Package selection used instead of `package-args` when a Cargo.toml or Cargo.lock
@@ -174,8 +227,7 @@ env:
     [
     {"os": "ubuntu-latest", "target": "x86_64-unknown-linux-gnu"},
     {"os": "ubuntu-24.04-arm", "target": "aarch64-unknown-linux-gnu"},
-    {"os": "macos-latest", "target": "aarch64-apple-darwin"},
-    {"os": "macos-latest", "target": "x86_64-apple-darwin"},
+    {"os": "xcode-27", "target": "aarch64-apple-darwin"},
     {"os": "windows-latest", "target": "x86_64-pc-windows-msvc"}
     ]
 
@@ -183,10 +235,14 @@ jobs:
   # The matrix input, or the shared matrix when it is empty (strategy cannot read `env`);
   # whether the jobs do any work (`run`) and which packages they cover (`package-args`).
   plan:
+    # Draft pull requests (`skip-drafts`) skip `plan`, so every job below skips too.
+    if: >-
+      !inputs.skip-drafts
+      || github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
-      matrix: ${{ steps.m.outputs.matrix }}
+      matrix: ${{ steps.runners.outputs.matrix }}
       run: ${{ steps.scope.outputs.run }}
       package-args: ${{ steps.scope.outputs.package-args }}
     steps:
@@ -204,6 +260,7 @@ jobs:
       - id: scope
         env:
           CHANGED_ONLY: ${{ inputs.changed-only }}
+          SKIP: ${{ inputs.skip }}
           FULL_PACKAGE_ARGS: ${{ inputs.full-package-args }}
           RUST: ${{ steps.changes.outputs.rust }}
           RUST_FULL: ${{ steps.changes.outputs.rust_full }}
@@ -211,6 +268,7 @@ jobs:
           set -euo pipefail
           run=true
           if [ "$CHANGED_ONLY" = true ] && [ "$RUST" != true ]; then run=false; fi
+          if [ "$SKIP" = true ]; then run=false; fi
           packages="$PACKAGE_ARGS"
           if [ "$RUST_FULL" = true ] && [ -n "$FULL_PACKAGE_ARGS" ]; then
             packages="$FULL_PACKAGE_ARGS"
@@ -218,9 +276,26 @@ jobs:
           echo "run=$run" >> "$GITHUB_OUTPUT"
           echo "package-args=$packages" >> "$GITHUB_OUTPUT"
           echo "work: $run; packages: ${packages:-<root package>}"
-          if [ "$run" = false ]; then
+          if [ "$SKIP" = true ]; then
+            echo "::notice title=ci-rust::skip is set; fmt, clippy, tests and MSRV are no-ops"
+          elif [ "$run" = false ]; then
             echo "::notice title=ci-rust::no Rust file changed; fmt, clippy, tests and MSRV are no-ops"
           fi
+      # No work: every entry keeps its name (`target`) but runs its no-op steps on
+      # `skip-runs-on`, so a docs-only change queues no macOS, Windows or ARM runner.
+      - id: runners
+        env:
+          MATRIX: ${{ steps.m.outputs.matrix }}
+          RUN: ${{ steps.scope.outputs.run }}
+          SKIP_RUNS_ON: ${{ inputs.skip-runs-on }}
+        run: |
+          set -euo pipefail
+          m="$MATRIX"
+          if [ "$RUN" != true ] && [ -n "$SKIP_RUNS_ON" ]; then
+            m=$(jq -c --arg os "$SKIP_RUNS_ON" 'map(.os = $os)' <<<"$m")
+            echo "::notice title=ci-rust::no work; every matrix entry runs on $SKIP_RUNS_ON"
+          fi
+          echo "matrix=$m" >> "$GITHUB_OUTPUT"
       - name: Cancel the run on failure
         if: failure() && inputs.cancel-run-on-failure
         uses: $/.github/actions/cancel-run # nosemgrep: github-actions-mutable-action-tag
@@ -242,7 +317,7 @@ jobs:
           persist-credentials: false
 
       - if: inputs.rust-version == ''
-        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
         with:
           working_directory: ${{ inputs.working-directory }}
           install_args: ${{ inputs.mise-install-args }}
@@ -296,9 +371,16 @@ jobs:
         with:
           persist-credentials: false
 
+      # The pyrlyn Xcode, before anything compiles (cc, linker and SDK come from it).
+      - name: Select Xcode ${{ inputs.xcode-version }}
+        if: env.RUN == 'true' && runner.os == 'macOS' && inputs.xcode-version != ''
+        uses: $/.github/actions/setup-xcode # nosemgrep: github-actions-mutable-action-tag
+        with:
+          version: ${{ inputs.xcode-version }}
+
       # Default path: the Rust version pinned in the caller's mise.toml.
       - if: env.RUN == 'true' && inputs.rust-version == ''
-        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
         with:
           working_directory: ${{ inputs.working-directory }}
           install_args: ${{ inputs.mise-install-args }}
@@ -310,7 +392,12 @@ jobs:
         name: Use the pinned Rust and add the target
         env:
           RUST_VERSION: ${{ inputs.rust-version }}
-          TEST: ${{ matrix.test }}
+          # toJSON keeps JSON false as the string "false". A bare ${{ matrix.test }} can
+          # arrive empty for boolean false, which would run the tests. A missing key is
+          # null. Quotes are stripped so a JSON string "false" is accepted too.
+          TEST: ${{ toJSON(matrix.test) }}
+          LOCKED: ${{ inputs.locked }}
+          CARGO_ARGS: ${{ inputs.clippy-args }}
         run: |
           set -euo pipefail
           if [ -n "$RUST_VERSION" ]; then
@@ -330,15 +417,34 @@ jobs:
           rustc --version | grep -q "^rustc $version " \
             || { echo "rustc is not the pinned Rust $version" >&2; exit 1; }
           host="$(rustc -vV | sed -n 's/^host: //p')"
+          test_flag=${TEST//'"'/}
           if [ "$host" = "$TARGET" ]; then
             echo "TARGET_ARGS=" >> "$GITHUB_ENV"
-            if [ "$TEST" = "false" ]; then native=false; else native=true; fi
+            if [ "$test_flag" = "false" ]; then native=false; else native=true; fi
           else
             echo "TARGET_ARGS=--target $TARGET" >> "$GITHUB_ENV"
             native=false
           fi
           echo "NATIVE=$native" >> "$GITHUB_ENV"
           echo "host $host, target $TARGET, tests run: $native"
+          case "$LOCKED" in
+            true) locked=--locked ;;
+            false) locked="" ;;
+            auto)
+              manifest="$(cargo locate-project --workspace --message-format plain)"
+              locked=""
+              if [ -f "$(dirname "$manifest")/Cargo.lock" ]; then locked=--locked; fi
+              ;;
+            *) echo "::error::locked must be auto, true or false, got '$LOCKED'"; exit 1 ;;
+          esac
+          echo "LOCKED_ARGS=$locked" >> "$GITHUB_ENV"
+          # clippy-args that already pass --locked (the pre-`locked` way) get no second one:
+          # cargo rejects a repeated --locked.
+          case " $CARGO_ARGS " in
+            *" --locked "*) echo "CLIPPY_LOCKED_ARGS=" >> "$GITHUB_ENV" ;;
+            *) echo "CLIPPY_LOCKED_ARGS=$locked" >> "$GITHUB_ENV" ;;
+          esac
+          echo "locked: ${locked:-no}"
 
       - if: env.RUN == 'true'
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -350,7 +456,7 @@ jobs:
             || github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
 
       - if: env.RUN == 'true' && inputs.tools != ''
-        uses: taiki-e/install-action@dfae9bf3d6f6c6f20ef4ebb3486c01a51341ff12 # v2.87.18
+        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
           tool: ${{ inputs.tools }}
 
@@ -363,22 +469,24 @@ jobs:
       - if: env.RUN == 'true'
         name: clippy
         env:
-          CLIPPY_ARGS: ${{ inputs.clippy-args }}
+          CARGO_ARGS: ${{ inputs.clippy-args }}
           FEATURE_ARGS: ${{ inputs.feature-args }}
         run: |
-          # CLIPPY_ARGS and TARGET_ARGS are split on whitespace on purpose.
+          # CARGO_ARGS and TARGET_ARGS are split on whitespace on purpose.
           # shellcheck disable=SC2086
-          cargo clippy $PACKAGE_ARGS --all-targets $FEATURE_ARGS $TARGET_ARGS $CLIPPY_ARGS \
-            -- -D warnings
+          cargo clippy $PACKAGE_ARGS --all-targets $FEATURE_ARGS $TARGET_ARGS $CARGO_ARGS \
+            $CLIPPY_LOCKED_ARGS -- -D warnings
 
       - if: env.RUN == 'true'
         name: check
         env:
-          CLIPPY_ARGS: ${{ inputs.clippy-args }}
+          CARGO_ARGS: ${{ inputs.clippy-args }}
           FEATURE_ARGS: ${{ inputs.feature-args }}
         run: |
+          # CARGO_ARGS and TARGET_ARGS are split on whitespace on purpose.
           # shellcheck disable=SC2086
-          cargo check $PACKAGE_ARGS --all-targets $FEATURE_ARGS $TARGET_ARGS $CLIPPY_ARGS
+          cargo check $PACKAGE_ARGS --all-targets $FEATURE_ARGS $TARGET_ARGS $CARGO_ARGS \
+            $CLIPPY_LOCKED_ARGS
 
       - name: test
         if: env.RUN == 'true' && env.NATIVE == 'true' && inputs.test-command != ''
@@ -393,9 +501,9 @@ jobs:
           # The step shell runs with -e; keep going after a failure to inspect the log.
           set +e -uo pipefail
           log="$RUNNER_TEMP/doctests.log"
-          # PACKAGE_ARGS and FEATURE_ARGS are split on whitespace on purpose.
+          # PACKAGE_ARGS, FEATURE_ARGS and LOCKED_ARGS are split on whitespace on purpose.
           # shellcheck disable=SC2086
-          cargo test $PACKAGE_ARGS --doc $FEATURE_ARGS 2>&1 | tee "$log"
+          cargo test $PACKAGE_ARGS --doc $FEATURE_ARGS $LOCKED_ARGS 2>&1 | tee "$log"
           code=${PIPESTATUS[0]}
           if [ "$code" -ne 0 ] && grep -q 'no library targets found' "$log"; then
             echo "::notice title=doctests skipped::no library target in the selected packages"

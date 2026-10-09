@@ -2,13 +2,23 @@ name: semgrep
 
 # Reusable Semgrep scan with the free open-source CLI (no Semgrep account or token). Results go
 # to the Security tab (Code scanning, category `semgrep`). Findings do not fail the job unless
-# `fail-on-findings` is true, so by default this reports and never blocks.
+# `fail-on-findings` is true, so by default this reports and never blocks. Results suppressed
+# with a `# nosemgrep` comment are dropped before the upload (code scanning would keep them open).
 #
 # Caller job permissions: security-events: write, contents: read, actions: write (cancel-run).
 # Private repositories on the Free plan: pass `upload: false` (SARIF kept as an artifact).
 on:
   workflow_call:
     inputs:
+      skip-drafts:
+        description: >-
+          Skip every job on a draft pull request: a job-level `if`, so no runner starts. The
+          caller's `pull_request` trigger must list `ready_for_review` in `types` so the run
+          starts when the draft is marked ready. false runs drafts like any other pull request
+          (ci.yml passes its `skip-drafts` config key).
+        type: boolean
+        required: false
+        default: true
       cancel-run-on-failure:
         description: >-
           When a job fails, cancel the whole workflow run (every other running or queued
@@ -42,6 +52,9 @@ permissions:
 
 jobs:
   scan:
+    if: >-
+      !inputs.skip-drafts
+      || github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     permissions:
       security-events: write
@@ -68,6 +81,26 @@ jobs:
           # args and EXTRA_ARGS are split on whitespace on purpose.
           # shellcheck disable=SC2086
           semgrep scan $args $EXTRA_ARGS --sarif --output semgrep.sarif --metrics off
+      # Semgrep keeps `# nosemgrep` matches in the SARIF, marked with `suppressions`, and code
+      # scanning ignores that mark: every suppressed line would stay an open alert. Drop them.
+      - name: Drop nosemgrep-suppressed results
+        if: always() && hashFiles('semgrep.sarif') != ''
+        run: |
+          python3 - <<'PY'
+          import json
+
+          with open("semgrep.sarif", encoding="utf-8") as f:
+              sarif = json.load(f)
+          dropped = 0
+          for run in sarif.get("runs", []):
+              results = run.get("results", [])
+              kept = [r for r in results if not r.get("suppressions")]
+              dropped += len(results) - len(kept)
+              run["results"] = kept
+          with open("semgrep.sarif", "w", encoding="utf-8") as f:
+              json.dump(sarif, f)
+          print(f"dropped {dropped} nosemgrep-suppressed result(s)")
+          PY
       - uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         if: always() && inputs.upload && hashFiles('semgrep.sarif') != ''
         with:

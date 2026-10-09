@@ -1,4 +1,4 @@
-# Using pyrlyn/infra
+# Using pyrlyn/ci
 
 ## ci-rust.yml
 
@@ -16,9 +16,12 @@ The shared matrix (default of the `matrix` input):
 | --- | --- | --- |
 | `ubuntu-latest` | `x86_64-unknown-linux-gnu` | run |
 | `ubuntu-24.04-arm` | `aarch64-unknown-linux-gnu` | run |
-| `macos-latest` | `aarch64-apple-darwin` | run |
-| `macos-latest` | `x86_64-apple-darwin` | cross build only |
+| `xcode-27` | `aarch64-apple-darwin` | run |
 | `windows-latest` | `x86_64-pc-windows-msvc` | run |
+
+macOS is arm64 (Apple Silicon) only. Its entry runs on GitHub's `xcode-27` image (macOS with
+Xcode 27; `macos-latest` and `macos-26` carry Xcode 26.x) and selects Xcode 27 through the
+`setup-xcode` action (`xcode-version` input, default `27`).
 
 Callers inherit it: no per-repository OS matrix. Because callers pin a commit SHA, a matrix
 change reaches a repository when its pin moves. Pass `matrix` only to drop a target the
@@ -34,6 +37,7 @@ name: ci
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
 permissions:
@@ -41,7 +45,7 @@ permissions:
 
 jobs:
   rust:
-    uses: pyrlyn/infra/.github/workflows/ci-rust.yml@<full commit sha>
+    uses: pyrlyn/ci/.github/workflows/ci-rust.yml@<full commit sha>
     with:
       # all optional
       # working-directory: .
@@ -82,7 +86,9 @@ Pin callers to a full 40-character commit SHA (`@<sha>`, with a `# vX.Y.Z` comme
 exist) so changes here do not reach callers unannounced.
 
 `self-test.yml` runs `ci-rust.yml` against `tests/fixtures/rust-crate` on every pull
-request, with the shared matrix and through the `rust-version` path.
+request, with the shared matrix, through the `rust-version` path, and through a one-entry
+custom matrix (`"test": false`) that overrides `tools`, `setup-command`, `test-command`,
+`build-command`, `clippy-args`, and `cache-all-refs`.
 
 ## Secrets
 
@@ -92,7 +98,7 @@ they are passed explicitly or with `secrets: inherit`:
 ```yaml
 jobs:
   rust:
-    uses: pyrlyn/infra/.github/workflows/ci-rust.yml@<full commit sha>
+    uses: pyrlyn/ci/.github/workflows/ci-rust.yml@<full commit sha>
     secrets: inherit
 ```
 
@@ -107,7 +113,7 @@ token permissions; the called workflow cannot raise them.
 
 This repository is public, so any repository can call its workflows. The calling
 repository's Actions policy still applies to every action used inside the called workflow.
-With "only actions owned by listepo", `pyrlyn/infra` itself is allowed but the third-party
+With "only actions owned by listepo", `pyrlyn/ci` itself is allowed but the third-party
 actions it uses (`actions/checkout`, `jdx/mise-action`, `Swatinem/rust-cache`, `taiki-e/install-action`) are blocked.
 Such a repository needs "Allow actions created by GitHub" and these patterns allowed:
 

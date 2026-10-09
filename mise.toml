@@ -1,2 +1,3 @@
 [tools]
 actionlint = "1.7.12" # lint.yml and local `mise x -- actionlint`
+shellcheck = "0.11.0" # used by actionlint for run: scripts; CI uses the runner image's copy

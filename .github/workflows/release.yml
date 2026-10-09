@@ -8,7 +8,8 @@ name: release
 #   checks  -> the tag exists and names the commit this run is on, required check runs green
 #              on it, publish secrets present
 #   verify  -> `verify-command` on every OS in `verify-os` (same gate as CI)
-#   build   -> `build-command` per {os, target}; macOS codesign + notarization (optional);
+#   build   -> `build-command` per {os, target}, macOS jobs on Xcode `xcode-version` (setup-xcode);
+#              macOS codesign + notarization (optional);
 #              `smoke-command` on targets the runner executes natively; archives + sha256
 #   release -> uploads all archives to bump's Release for the tag and publishes it
 #   publish -> `cargo publish` (publish-crates) and/or a generic `publish-command`
@@ -74,7 +75,15 @@ on:
         description: JSON array of runner labels for verify.
         type: string
         required: false
-        default: '["ubuntu-latest", "macos-latest", "windows-latest"]'
+        default: '["ubuntu-latest", "xcode-27", "windows-latest"]'
+      xcode-version:
+        description: >-
+          Xcode that the macOS verify and build jobs select (.github/actions/setup-xcode): a
+          major ("27") or major.minor ("27.1"); the job fails when the runner has none (Xcode
+          27 is on the `xcode-27` image only). Empty keeps the runner image's default Xcode.
+        type: string
+        required: false
+        default: "27"
       build-matrix:
         description: >-
           JSON array of {"os": <runner>, "target": <triple>} entries to build. Entries with
@@ -85,8 +94,7 @@ on:
           [
           {"os": "ubuntu-latest", "target": "x86_64-unknown-linux-gnu"},
           {"os": "ubuntu-24.04-arm", "target": "aarch64-unknown-linux-gnu"},
-          {"os": "macos-latest", "target": "aarch64-apple-darwin"},
-          {"os": "macos-latest", "target": "x86_64-apple-darwin"},
+          {"os": "xcode-27", "target": "aarch64-apple-darwin"},
           {"os": "windows-latest", "target": "x86_64-pc-windows-msvc"}
           ]
       working-directory:
@@ -99,17 +107,26 @@ on:
         type: string
         required: false
         default: ""
-      build-command:
-        description: Bash that builds the release binaries. TARGET is set.
+      cargo-profile:
+        description: >-
+          Cargo profile the default build-command builds with ("release", "dev", a custom
+          profile). Exported to setup-command, build-command and bin-dir as CARGO_PROFILE, with
+          PROFILE_DIR its target/ subdirectory ("debug" for "dev", else the profile name).
         type: string
         required: false
-        default: cargo build --release --locked --target "$TARGET"
+        default: release
+      build-command:
+        description: Bash that builds the release binaries. TARGET, CARGO_PROFILE are set.
+        type: string
+        required: false
+        default: cargo build --profile "$CARGO_PROFILE" --locked --target "$TARGET"
       bin-dir:
         description: >-
-          Where the built binaries land, relative to working-directory. TARGET is expanded.
+          Where the built binaries land, relative to working-directory. TARGET and
+          PROFILE_DIR are expanded.
         type: string
         required: false
-        default: target/$TARGET/release
+        default: target/$TARGET/$PROFILE_DIR
       bins:
         description: Space-separated binary names to package (".exe" is added on Windows).
         type: string
@@ -157,6 +174,13 @@ on:
         type: boolean
         required: false
         default: false
+      prerelease:
+        description: >-
+          Mark the Release a prerelease. Required, with no default: each caller decides it in
+          its own release workflow, this workflow decides nothing. A tag with a `-` suffix is
+          a prerelease either way.
+        type: boolean
+        required: true
       publish-crates:
         description: Run `publish-crates-command` after the Release (needs CARGO_REGISTRY_TOKEN).
         type: boolean
@@ -234,6 +258,7 @@ jobs:
         env:
           TAG: ${{ inputs.tag }}
           DRY_RUN: ${{ inputs.dry-run }}
+          PRERELEASE: ${{ inputs.prerelease }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -253,6 +278,7 @@ jobs:
           fi
           pre=false
           [[ "${TAG##*/}" == *-* ]] && pre=true
+          [ "$PRERELEASE" = "true" ] && pre=true
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "prerelease=$pre" >> "$GITHUB_OUTPUT"
           echo "releasing $TAG from $GITHUB_SHA (prerelease: $pre, dry run: $DRY_RUN)"
@@ -319,8 +345,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Select Xcode ${{ inputs.xcode-version }}
+        if: runner.os == 'macOS' && inputs.xcode-version != ''
+        uses: $/.github/actions/setup-xcode # nosemgrep: github-actions-mutable-action-tag
+        with:
+          version: ${{ inputs.xcode-version }}
       - if: inputs.mise
-        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
         with:
           working_directory: ${{ inputs.working-directory }}
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -349,6 +380,8 @@ jobs:
     env:
       TARGET: ${{ matrix.target }}
       TAG: ${{ needs.checks.outputs.tag }}
+      CARGO_PROFILE: ${{ inputs.cargo-profile }}
+      PROFILE_DIR: ${{ inputs.cargo-profile == 'dev' && 'debug' || inputs.cargo-profile }}
     defaults:
       run:
         shell: bash
@@ -357,8 +390,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Select Xcode ${{ inputs.xcode-version }}
+        if: runner.os == 'macOS' && inputs.xcode-version != ''
+        uses: $/.github/actions/setup-xcode # nosemgrep: github-actions-mutable-action-tag
+        with:
+          version: ${{ inputs.xcode-version }}
       - if: inputs.mise
-        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
         with:
           working_directory: ${{ inputs.working-directory }}
       # TARGET comes from the build-matrix input, so it never reaches $GITHUB_ENV: the pin is
@@ -490,7 +528,7 @@ jobs:
           path: dist
           merge-multiple: true
       - if: inputs.mise && inputs.notes-command != ''
-        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
       - name: Notes
         if: inputs.notes-command != ''
         env:
@@ -539,7 +577,7 @@ jobs:
         with:
           persist-credentials: false
       - if: inputs.mise
-        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
         with:
           working_directory: ${{ inputs.working-directory }}
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1

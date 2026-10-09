@@ -21,7 +21,7 @@ permissions:
 
 jobs:
   ci:
-    uses: pyrlyn/infra/.github/workflows/ci.yml@<SHA> # main
+    uses: pyrlyn/ci/.github/workflows/ci.yml@<SHA> # main
     permissions:
       contents: read
       security-events: write

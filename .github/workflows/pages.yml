@@ -11,6 +11,15 @@ name: pages
 on:
   workflow_call:
     inputs:
+      skip-drafts:
+        description: >-
+          Skip every job on a draft pull request: a job-level `if`, so no runner starts. The
+          caller's `pull_request` trigger must list `ready_for_review` in `types` so the run
+          starts when the draft is marked ready. false runs drafts like any other pull request
+          (ci.yml passes its `skip-drafts` config key).
+        type: boolean
+        required: false
+        default: true
       build-command:
         description: Bash that builds the site (run in working-directory).
         type: string
@@ -74,6 +83,10 @@ permissions:
 
 jobs:
   build:
+    # Draft pull requests (`skip-drafts`) skip `build`, and `deploy` with it.
+    if: >-
+      !inputs.skip-drafts
+      || github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: ${{ inputs.timeout-minutes }}
     defaults:
@@ -86,7 +99,7 @@ jobs:
           fetch-depth: ${{ inputs.fetch-depth }}
           persist-credentials: false
       - if: inputs.mise
-        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
         with:
           install_args: ${{ inputs.mise-install-args }}
       - if: inputs.node-version != ''

@@ -1,0 +1,748 @@
+name: release-apple-desktop
+
+# PRODUCTION / RELEASE BUILDS ONLY. Reusable release of a macOS desktop app: a Developer ID
+# signed, notarised and stapled <app-name>-X.Y.Z.dmg under the tag <tag-prefix>X.Y.Z, plus the
+# Sparkle appcast that installed copies update from, published as GitHub Releases in the
+# caller's repository. Test builds (CI, a local Mac) must not call this: they build unsigned or
+# ad-hoc signed and need none of the secrets below.
+#
+# Secrets (pyrlyn organization secrets; callers pass them with `secrets: inherit`). Checked
+# before anything is built; a missing one stops the run:
+#   MACOS_CERTIFICATE, MACOS_CERTIFICATE_PWD - the Developer ID Application .p12 (base64) and
+#     its password
+#   APPSTORE_CONNECT_KEY (the .p8 as base64), APPSTORE_CONNECT_KEY_ID,
+#     APPSTORE_CONNECT_ISSUER_ID - notarytool's App Store Connect API key, or instead
+#   APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD - Apple ID notarisation (used only when the
+#     API key is not set)
+#   SPARKLE_ED_PRIVATE_KEY - the EdDSA key Sparkle's generate_keys exported with -x; its public
+#     half is SUPublicEDKey in the app's Info.plist (only with `sparkle: true`)
+#
+# Call it from a thin, dispatch-only workflow in the app's repository:
+#
+#   on:
+#     workflow_dispatch:
+#       inputs:
+#         version: { description: App version X.Y.Z, required: true, type: string }
+#   jobs:
+#     release:
+#       permissions:
+#         contents: write # the tag, its release and the appcast release
+#         actions: read   # notify-failure: failed job names
+#         issues: write   # notify-failure: the release-failure issue
+#       uses: pyrlyn/ci/.github/workflows/release-apple-desktop.yml@<sha>
+#       with:
+#         version: ${{ inputs.version }}
+#         working-directory: desktop/macos
+#         project: Ketch.xcodeproj
+#         scheme: Ketch
+#         app-name: Ketch
+#         export-options: desktop/macos/ExportOptions.plist
+#         info-plist: desktop/macos/Ketch/Info.plist
+#       secrets: inherit
+#
+# Releases made here never become /releases/latest (`--latest=false` everywhere, checked after
+# publishing), so a CLI sharing the repository keeps its installers' /releases/latest. The tag
+# and the release exist only once every check passed: a failed run leaves nothing but logs.
+# Stages: version and secrets check -> optional pre-build -> archive (xcodegen optional) ->
+# export for Developer ID -> notarise and staple the app, build, sign, notarise and staple the
+# .dmg -> Gatekeeper smoke test -> checksum -> appcast (fetch, generate, verify the EdDSA
+# signature against the app's SUPublicEDKey) -> release notes -> publish (skipped by dry-run).
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: App version to release, plain X.Y.Z (tagged <tag-prefix>X.Y.Z).
+        type: string
+        required: true
+      tag-prefix:
+        description: Tag prefix of app releases; kept apart from the CLI's `v` tags.
+        type: string
+        required: false
+        default: desktop-v
+      dry-run:
+        description: Build, sign, notarise and verify everything; publish nothing.
+        type: boolean
+        required: false
+        default: false
+      runs-on:
+        description: macOS runner label.
+        type: string
+        required: false
+        default: macos-26
+      xcode-version:
+        description: >-
+          Xcode to select (.github/actions/setup-xcode), e.g. "26" or "27.1". Empty keeps the
+          runner image's default Xcode.
+        type: string
+        required: false
+        default: ""
+      timeout-minutes:
+        description: Timeout of the release job.
+        type: number
+        required: false
+        default: 120
+      mise-install-args:
+        description: >-
+          Tools jdx/mise-action installs from the caller's mise.toml (e.g. "xcodegen git-cliff").
+          Empty skips mise.
+        type: string
+        required: false
+        default: xcodegen git-cliff
+      pre-build-command:
+        description: Bash run from the repository root before the archive (e.g. "just xcframework").
+        type: string
+        required: false
+        default: ""
+      working-directory:
+        description: Directory holding the Xcode project (and its XcodeGen spec).
+        type: string
+        required: true
+      xcodegen-spec:
+        description: XcodeGen spec in working-directory, generated before the archive. Empty skips.
+        type: string
+        required: false
+        default: project.yml
+      project:
+        description: The .xcodeproj in working-directory.
+        type: string
+        required: true
+      scheme:
+        description: Scheme to archive.
+        type: string
+        required: true
+      configuration:
+        description: Build configuration.
+        type: string
+        required: false
+        default: Release
+      archs:
+        description: Architectures to build, space-separated; checked on the exported binary.
+        type: string
+        required: false
+        default: arm64
+      app-name:
+        description: >-
+          Product name: <app-name>.app is exported, <app-name>-X.Y.Z.dmg released, and the disk
+          image's volume is named after it.
+        type: string
+        required: true
+      export-options:
+        description: Developer ID ExportOptions.plist, relative to the repository root.
+        type: string
+        required: true
+      info-plist:
+        description: >-
+          The app's source Info.plist (repository root relative). With `sparkle`, its
+          SUPublicEDKey must not be empty or a *PLACEHOLDER* value.
+        type: string
+        required: false
+        default: ""
+      minimum-system-version:
+        description: >-
+          Expected LSMinimumSystemVersion of the exported app (e.g. "26.0"); also written into
+          the release notes. Empty skips both.
+        type: string
+        required: false
+        default: ""
+      sparkle:
+        description: Generate, verify and publish a Sparkle appcast (needs SPARKLE_ED_PRIVATE_KEY).
+        type: boolean
+        required: false
+        default: true
+      sparkle-bin:
+        description: >-
+          Directory with Sparkle's generate_appcast. Empty uses the Sparkle package xcodebuild
+          resolved: <working-directory>/build/SourcePackages/artifacts/sparkle/Sparkle/bin.
+        type: string
+        required: false
+        default: ""
+      appcast-tag:
+        description: >-
+          Prerelease whose appcast.xml asset is the stable feed URL (SUFeedURL
+          .../releases/download/<appcast-tag>/appcast.xml); every app release replaces it.
+        type: string
+        required: false
+        default: desktop-appcast
+      cliff-config:
+        description: git-cliff config for the release notes (needs git-cliff). Empty skips git-cliff.
+        type: string
+        required: false
+        default: ""
+      notes-command:
+        description: >-
+          Bash that writes the release notes to $NOTES_FILE (TAG, VERSION, PREVIOUS set);
+          overrides cliff-config. Empty with no cliff-config gives a one-line note.
+        type: string
+        required: false
+        default: ""
+      release-title:
+        description: Release title. Empty gives "<app-name> for macOS X.Y.Z".
+        type: string
+        required: false
+        default: ""
+      release-notes-header:
+        description: Markdown put above the release notes, e.g. a dev-build notice. Empty adds nothing.
+        type: string
+        required: false
+        default: ""
+      prerelease:
+        description: >-
+          Publish the app release as a prerelease. Required, with no default: each caller
+          decides it in its own workflow, this workflow decides nothing. Never /releases/latest
+          either way.
+        type: boolean
+        required: true
+      notify-maintainer:
+        description: >-
+          GitHub login mentioned and assigned on a `release-failure` issue when the release
+          fails (not for a dry run). Empty turns it off.
+        type: string
+        required: false
+        default: listepo
+    secrets:
+      MACOS_CERTIFICATE:
+        description: "Base64 Developer ID Application .p12."
+        required: false
+      MACOS_CERTIFICATE_PWD:
+        description: "Password of MACOS_CERTIFICATE."
+        required: false
+      APPSTORE_CONNECT_KEY:
+        description: "Base64 App Store Connect API key (.p8) for notarytool."
+        required: false
+      APPSTORE_CONNECT_KEY_ID:
+        description: "Key ID of APPSTORE_CONNECT_KEY."
+        required: false
+      APPSTORE_CONNECT_ISSUER_ID:
+        description: "Issuer ID of APPSTORE_CONNECT_KEY."
+        required: false
+      APPLE_ID:
+        description: "Apple ID for notarisation when the API key is not set."
+        required: false
+      APPLE_TEAM_ID:
+        description: "Team ID for notarisation with APPLE_ID."
+        required: false
+      APPLE_APP_PASSWORD:
+        description: "App-specific password of APPLE_ID."
+        required: false
+      SPARKLE_ED_PRIVATE_KEY:
+        description: "Sparkle EdDSA private key (generate_keys -x), with `sparkle: true`."
+        required: false
+    outputs:
+      tag:
+        description: The app release's tag.
+        value: ${{ jobs.release.outputs.tag }}
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    # Two releases of one app at once would race for the one appcast.
+    concurrency:
+      group: release-apple-desktop-${{ github.repository }}
+      cancel-in-progress: false
+    permissions:
+      contents: write # the tag, its release, and the appcast release
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+    env:
+      VERSION: ${{ inputs.version }}
+      TAG_PREFIX: ${{ inputs.tag-prefix }}
+      APP_NAME: ${{ inputs.app-name }}
+      WORKDIR: ${{ inputs.working-directory }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # every tag: the version check and the release notes
+          persist-credentials: false
+
+      # Plain X.Y.Z, untagged, above every earlier <tag-prefix> tag: Sparkle offers an update
+      # only when CFBundleVersion grows, and the archive sets CFBundleVersion to this version.
+      # No prerelease suffix: Sparkle and semver order `1.0.0-beta` differently, and a beta
+      # would reach everyone through the one feed.
+      - name: Check the version
+        id: version
+        run: |
+          set -euo pipefail
+          [[ "$TAG_PREFIX" =~ ^[A-Za-z0-9._/-]+$ ]] || { echo "invalid tag-prefix" >&2; exit 1; }
+          case "$APP_NAME" in
+            ""|*$'\n'*|*$'\r'*) echo "app-name must be a single line" >&2; exit 1 ;;
+          esac
+          [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || {
+            echo "version must be X.Y.Z without a leading v or a suffix (got '$VERSION')" >&2
+            exit 1
+          }
+          tag="$TAG_PREFIX$VERSION"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "$tag already exists; a released version is never rebuilt" >&2
+            exit 1
+          fi
+          previous="$(git tag --list "${TAG_PREFIX}[0-9]*" | sed "s|^$TAG_PREFIX||" \
+            | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1 || true)"
+          if [ -n "$previous" ]; then
+            highest="$(printf '%s\n%s\n' "$previous" "$VERSION" \
+              | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1)"
+            [ "$highest" = "$VERSION" ] \
+              || { echo "$VERSION is not above the last app release $previous" >&2; exit 1; }
+            previous="$TAG_PREFIX$previous"
+          fi
+          echo "tag=$tag previous=${previous:-none}"
+          {
+            echo "tag=$tag"
+            echo "previous=$previous"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check the secrets
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          APPSTORE_CONNECT_KEY: ${{ secrets.APPSTORE_CONNECT_KEY }}
+          APPSTORE_CONNECT_KEY_ID: ${{ secrets.APPSTORE_CONNECT_KEY_ID }}
+          APPSTORE_CONNECT_ISSUER_ID: ${{ secrets.APPSTORE_CONNECT_ISSUER_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+          SPARKLE: ${{ inputs.sparkle }}
+          INFO_PLIST: ${{ inputs.info-plist }}
+        run: |
+          set -euo pipefail
+          missing=""
+          need() { for n in "$@"; do [ -n "${!n:-}" ] || missing="$missing $n"; done; }
+          need MACOS_CERTIFICATE MACOS_CERTIFICATE_PWD
+          if [ -n "$APPSTORE_CONNECT_KEY$APPSTORE_CONNECT_KEY_ID$APPSTORE_CONNECT_ISSUER_ID" ] \
+            || [ -z "$APPLE_ID$APPLE_TEAM_ID$APPLE_APP_PASSWORD" ]; then
+            need APPSTORE_CONNECT_KEY APPSTORE_CONNECT_KEY_ID APPSTORE_CONNECT_ISSUER_ID
+            echo "NOTARY_AUTH=api-key" >> "$GITHUB_ENV"
+          else
+            need APPLE_ID APPLE_TEAM_ID APPLE_APP_PASSWORD
+            echo "NOTARY_AUTH=apple-id" >> "$GITHUB_ENV"
+          fi
+          [ "$SPARKLE" != "true" ] || need SPARKLE_ED_PRIVATE_KEY
+          if [ -n "$missing" ]; then
+            echo "missing secrets:$missing" >&2
+            echo "An app release is signed, notarised and (with sparkle) carries a signed" >&2
+            echo "update feed; each needs its pyrlyn organization secret, passed with" >&2
+            echo "'secrets: inherit'. Nothing was built." >&2
+            exit 1
+          fi
+          if [ "$SPARKLE" = "true" ] && [ -n "$INFO_PLIST" ]; then
+            key="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$INFO_PLIST" 2>/dev/null || true)"
+            if [ -z "$key" ] || [[ "$key" == *PLACEHOLDER* ]]; then
+              echo "SUPublicEDKey in $INFO_PLIST is empty or still the placeholder:" >&2
+              echo "run Sparkle's generate_keys, commit the public key, store the private one" >&2
+              echo "(generate_keys -x) as the SPARKLE_ED_PRIVATE_KEY organization secret." >&2
+              exit 1
+            fi
+          fi
+
+      - name: Select Xcode ${{ inputs.xcode-version }}
+        if: inputs.xcode-version != ''
+        uses: $/.github/actions/setup-xcode # nosemgrep: github-actions-mutable-action-tag
+        with:
+          version: ${{ inputs.xcode-version }}
+
+      - if: inputs.mise-install-args != ''
+        uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
+        with:
+          install_args: ${{ inputs.mise-install-args }}
+
+      - name: Pre-build
+        if: inputs.pre-build-command != ''
+        env:
+          PRE_BUILD_COMMAND: ${{ inputs.pre-build-command }}
+        run: eval "$PRE_BUILD_COMMAND"
+
+      # A throwaway keychain, searched by codesign and xcodebuild, holding the one Developer ID
+      # Application identity; deleted by the last step whatever happened.
+      - name: Import the signing certificate
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/app-signing.keychain-db"
+          keychain_pwd="$(openssl rand -hex 16)"
+          cert="$RUNNER_TEMP/app-certificate.p12"
+          echo "$MACOS_CERTIFICATE" | base64 --decode > "$cert"
+          security create-keychain -p "$keychain_pwd" "$keychain"
+          echo "KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_pwd" "$keychain"
+          security import "$cert" -P "$MACOS_CERTIFICATE_PWD" \
+            -f pkcs12 -k "$keychain" -T /usr/bin/codesign
+          rm -f "$cert"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$keychain_pwd" "$keychain" >/dev/null
+          # shellcheck disable=SC2046
+          security list-keychains -d user -s "$keychain" \
+            $(security list-keychains -d user | tr -d '"')
+
+          ids="$(security find-identity -v -p codesigning "$keychain" \
+            | grep '"Developer ID Application:' || true)"
+          if [ "$(printf '%s\n' "$ids" | grep -c .)" -ne 1 ]; then
+            echo "expected exactly one Developer ID Application identity, found:" >&2
+            security find-identity -v -p codesigning "$keychain" >&2
+            exit 1
+          fi
+          identity="$(printf '%s\n' "$ids" | sed -nE 's/^ *[0-9]+\) ([0-9A-F]{40}) .*/\1/p')"
+          team="$(printf '%s\n' "$ids" | sed -nE 's/.*\(([A-Z0-9]{10})\)"$/\1/p')"
+          if [ -z "$identity" ] || [ -z "$team" ]; then
+            echo "cannot read the identity or team" >&2
+            exit 1
+          fi
+          {
+            echo "IDENTITY=$identity"
+            echo "TEAM_ID=$team"
+          } >> "$GITHUB_ENV"
+
+      # Release configuration, signed with the hardened runtime; the version is both
+      # CFBundleShortVersionString and CFBundleVersion, which Sparkle compares.
+      - name: Archive the app
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          XCODEGEN_SPEC: ${{ inputs.xcodegen-spec }}
+          PROJECT: ${{ inputs.project }}
+          SCHEME: ${{ inputs.scheme }}
+          CONFIGURATION: ${{ inputs.configuration }}
+          ARCHS_IN: ${{ inputs.archs }}
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          if [ -n "$XCODEGEN_SPEC" ]; then xcodegen generate --spec "$XCODEGEN_SPEC"; fi
+          xcodebuild archive -project "$PROJECT" -scheme "$SCHEME" \
+            -configuration "$CONFIGURATION" \
+            -derivedDataPath build -archivePath "$RUNNER_TEMP/app.xcarchive" \
+            -destination 'generic/platform=macOS' ARCHS="$ARCHS_IN" ONLY_ACTIVE_ARCH=NO \
+            MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$VERSION" \
+            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="$IDENTITY" DEVELOPMENT_TEAM="$TEAM_ID" \
+            OTHER_CODE_SIGN_FLAGS="--keychain $KEYCHAIN --timestamp" ENABLE_HARDENED_RUNTIME=YES
+
+      - name: Export for Developer ID
+        env:
+          EXPORT_OPTIONS: ${{ inputs.export-options }}
+          ARCHS_IN: ${{ inputs.archs }}
+          MIN_SYSTEM: ${{ inputs.minimum-system-version }}
+        run: |
+          set -euo pipefail
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/app.xcarchive" \
+            -exportOptionsPlist "$EXPORT_OPTIONS" -exportPath "$RUNNER_TEMP/export"
+          app="$RUNNER_TEMP/export/$APP_NAME.app"
+          [ -d "$app" ] || { echo "no $APP_NAME.app in the export" >&2; exit 1; }
+          # '\n' is the spelling CodeQL treats as a single-line sanitizer; $'\n' drops a real newline
+          # so the path cannot append another entry to GITHUB_ENV.
+          app="$(printf '%s' "$app" | tr -d '\n\r' | tr -d $'\n\r')"
+          echo "APP=$app" >> "$GITHUB_ENV"
+
+          # What notarisation and Sparkle rely on, checked before either runs.
+          codesign --verify --deep --strict --verbose=2 "$app"
+          details="$(codesign --display --verbose=4 "$app" 2>&1)"
+          grep -q 'Authority=Developer ID Application' <<<"$details" \
+            || { echo "not signed with Developer ID" >&2; exit 1; }
+          grep -Eq 'flags=0x[0-9a-f]+\(runtime\)' <<<"$details" \
+            || { echo "the hardened runtime is off" >&2; exit 1; }
+          plist="$app/Contents/Info.plist"
+          exe="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$plist")"
+          want="$(tr ' ' '\n' <<<"$ARCHS_IN" | grep . | sort | xargs)"
+          archs="$(lipo -archs "$app/Contents/MacOS/$exe" | tr ' ' '\n' | sort | xargs)"
+          [ "$archs" = "$want" ] || { echo "expected $want, built $archs" >&2; exit 1; }
+          for key in CFBundleShortVersionString CFBundleVersion; do
+            [ "$(/usr/libexec/PlistBuddy -c "Print :$key" "$plist")" = "$VERSION" ] \
+              || { echo "$key is not $VERSION" >&2; exit 1; }
+          done
+          if [ -n "$MIN_SYSTEM" ]; then
+            got="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$plist")"
+            [ "$got" = "$MIN_SYSTEM" ] \
+              || { echo "LSMinimumSystemVersion is $got, not $MIN_SYSTEM" >&2; exit 1; }
+          fi
+
+      # The app is notarised and stapled on its own first, so a copy dragged out of the image
+      # opens offline without a Gatekeeper prompt; then the image holding it (the app next to
+      # a link to /Applications, compressed read-only) is signed, notarised and stapled too.
+      - name: Notarise and staple
+        env:
+          NOTARY_KEY: ${{ secrets.APPSTORE_CONNECT_KEY }}
+          NOTARY_KEY_ID: ${{ secrets.APPSTORE_CONNECT_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.APPSTORE_CONNECT_ISSUER_ID }}
+          NOTARY_APPLE_ID: ${{ secrets.APPLE_ID }}
+          NOTARY_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          NOTARY_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/notarise"
+          mkdir -p "$work"
+          key="$work/key.p8"
+          trap 'rm -f "$key"' EXIT
+          if [ "$NOTARY_AUTH" = api-key ]; then
+            echo "$NOTARY_KEY" | base64 --decode > "$key"
+            auth=(--key "$key" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER")
+          else
+            auth=(--apple-id "$NOTARY_APPLE_ID" --team-id "$NOTARY_TEAM_ID"
+              --password "$NOTARY_PASSWORD")
+          fi
+
+          notarise() {
+            xcrun notarytool submit "$1" "${auth[@]}" --wait --output-format json \
+              > "$work/result.json" || true
+            cat "$work/result.json"
+            if [ "$(jq -r .status "$work/result.json")" != "Accepted" ]; then
+              id="$(jq -r .id "$work/result.json")"
+              xcrun notarytool log "$id" "${auth[@]}" >&2 || true
+              exit 1
+            fi
+          }
+
+          ditto -c -k --keepParent "$APP" "$work/app.zip"
+          notarise "$work/app.zip"
+          xcrun stapler staple "$APP"
+
+          dmg="$GITHUB_WORKSPACE/$APP_NAME-$VERSION.dmg"
+          stage="$work/dmg"
+          mkdir -p "$stage"
+          # ditto keeps the signature's extended attributes and symlinks intact.
+          ditto "$APP" "$stage/$(basename "$APP")"
+          ln -s /Applications "$stage/Applications"
+          rm -f "$dmg"
+          hdiutil create -quiet -volname "$APP_NAME" -srcfolder "$stage" -fs HFS+ \
+            -format UDZO "$dmg"
+          hdiutil verify -quiet "$dmg"
+          codesign --sign "$IDENTITY" --keychain "$KEYCHAIN" --timestamp "$dmg"
+          notarise "$dmg"
+          xcrun stapler staple "$dmg"
+          xcrun stapler validate "$dmg"
+          # Same single-line write as APP: app-name and version are caller inputs.
+          dmg="$(printf '%s' "$dmg" | tr -d '\n\r' | tr -d $'\n\r')"
+          echo "DMG=$dmg" >> "$GITHUB_ENV"
+
+      # What a user's Mac decides on first open.
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          app="$(spctl --assess --type execute -vv "$APP" 2>&1)"
+          echo "$app"
+          grep -q 'source=Notarized Developer ID' <<<"$app"
+          image="$(spctl --assess --type open --context context:primary-signature -vv "$DMG" 2>&1)"
+          echo "$image"
+          grep -q 'source=Notarized Developer ID' <<<"$image"
+
+      - name: Checksum
+        run: |
+          set -euo pipefail
+          cd "$(dirname "$DMG")"
+          shasum -a 256 "$(basename "$DMG")" > "$(basename "$DMG").sha256"
+          shasum -a 256 -c "$(basename "$DMG").sha256"
+
+      # The feed lives on the appcast-tag release, at a URL that never changes (SUFeedURL). A
+      # feed that should exist but cannot be read stops the release: starting a new one would
+      # drop every earlier version.
+      - name: Fetch the current appcast
+        if: inputs.sparkle
+        env:
+          PREVIOUS: ${{ steps.version.outputs.previous }}
+          APPCAST_TAG: ${{ inputs.appcast-tag }}
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/appcast"
+          mkdir -p "$dir"
+          if out="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$APPCAST_TAG" --jq .id 2>&1)"
+          then
+            gh release download "$APPCAST_TAG" --repo "$GITHUB_REPOSITORY" \
+              --pattern appcast.xml --dir "$dir"
+          elif grep -q 'HTTP 404' <<<"$out" && [ -z "$PREVIOUS" ]; then
+            echo "first app release: starting the appcast"
+          else
+            echo "cannot read the $APPCAST_TAG release (last app release: ${PREVIOUS:-none}):" >&2
+            echo "$out" >&2
+            exit 1
+          fi
+          cp "$DMG" "$dir/"
+          echo "APPCAST_DIR=$dir" >> "$GITHUB_ENV"
+
+      # generate_appcast keeps the feed's earlier items, adds this one and signs the feed as a
+      # whole (SURequireSignedFeed). The new item's download URL is this release's asset, never
+      # /releases/latest. The private key reaches it on standard input, never as an argument or
+      # a file. generate_appcast only warns and leaves the item unsigned when the key is not the
+      # app's pair, so the enclosure's EdDSA signature is then verified with the SUPublicEDKey
+      # read out of the exported app, before anything is tagged.
+      - name: Generate and verify the appcast
+        if: inputs.sparkle
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+          SPARKLE_BIN: ${{ inputs.sparkle-bin }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          bin="${SPARKLE_BIN:-$WORKDIR/build/SourcePackages/artifacts/sparkle/Sparkle/bin}"
+          [ -x "$bin/generate_appcast" ] || { echo "no generate_appcast in $bin" >&2; exit 1; }
+          # No deltas: they are built from earlier archives, which are not kept here.
+          printf '%s\n' "$SPARKLE_ED_PRIVATE_KEY" | "$bin/generate_appcast" \
+            --ed-key-file - \
+            --download-url-prefix "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/" \
+            --link "https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG" \
+            --maximum-deltas 0 \
+            "$APPCAST_DIR"
+
+          cat > "$RUNNER_TEMP/appcast-verify.swift" <<'SWIFT'
+          import CryptoKit
+          import Foundation
+
+          func fail(_ message: String) -> Never {
+              FileHandle.standardError.write(Data("appcast-verify: \(message)\n".utf8))
+              exit(1)
+          }
+
+          let args = CommandLine.arguments
+          guard args.count == 5 else { fail("usage: <app> <appcast.xml> <dmg> <X.Y.Z>") }
+          let app = URL(fileURLWithPath: args[1])
+          let appcast = URL(fileURLWithPath: args[2])
+          let dmg = URL(fileURLWithPath: args[3])
+          let version = args[4]
+
+          guard let info = Bundle(url: app)?.infoDictionary else { fail("no Info.plist in \(app.path)") }
+          guard let keyText = info["SUPublicEDKey"] as? String,
+              let keyData = Data(base64Encoded: keyText),
+              let publicKey = try? Curve25519.Signing.PublicKey(rawRepresentation: keyData)
+          else { fail("SUPublicEDKey in \(app.path) is not a base64 Ed25519 public key") }
+          guard info["CFBundleVersion"] as? String == version else {
+              fail("CFBundleVersion is \(info["CFBundleVersion"] ?? "missing"), expected \(version)")
+          }
+          guard let feedText = try? String(contentsOf: appcast, encoding: .utf8) else {
+              fail("cannot read \(appcast.path)")
+          }
+          guard feedText.contains("sparkle-signatures:") else { fail("the appcast carries no feed signature") }
+          guard let feed = try? XMLDocument(data: Data(feedText.utf8)) else { fail("the appcast is not XML") }
+          let items = (try? feed.nodes(forXPath: "//item")) ?? []
+          let name = dmg.lastPathComponent
+          guard
+              let item = items.compactMap({ $0 as? XMLElement }).first(where: { item in
+                  let url = item.elements(forName: "enclosure").first?.attribute(forName: "url")?.stringValue
+                  return url.flatMap(URL.init(string:))?.lastPathComponent == name
+              })
+          else { fail("no item in the appcast points at \(name)") }
+          guard let enclosure = item.elements(forName: "enclosure").first else { fail("\(name) has no enclosure") }
+          let itemVersion =
+              item.elements(forName: "sparkle:version").first?.stringValue
+              ?? enclosure.attribute(forName: "sparkle:version")?.stringValue
+          guard itemVersion == version else { fail("the item for \(name) says version \(itemVersion ?? "nothing")") }
+          guard let signatureText = enclosure.attribute(forName: "sparkle:edSignature")?.stringValue,
+              let signature = Data(base64Encoded: signatureText)
+          else { fail("\(name) has no sparkle:edSignature: SPARKLE_ED_PRIVATE_KEY is not the app's key pair") }
+          guard let archive = try? Data(contentsOf: dmg) else { fail("cannot read \(dmg.path)") }
+          guard enclosure.attribute(forName: "length")?.stringValue == String(archive.count) else {
+              fail("the enclosure length does not match \(name)'s \(archive.count) bytes")
+          }
+          guard publicKey.isValidSignature(signature, for: archive) else {
+              fail("the signature on \(name) does not verify with the app's SUPublicEDKey")
+          }
+          print("appcast-verify: \(name) \(version) verifies with the app's key")
+          SWIFT
+          xcrun swift "$RUNNER_TEMP/appcast-verify.swift" \
+            "$APP" "$APPCAST_DIR/appcast.xml" "$APPCAST_DIR/$(basename "$DMG")" "$VERSION"
+          grep -q 'releases/latest' "$APPCAST_DIR/appcast.xml" \
+            && { echo "the appcast points at /releases/latest" >&2; exit 1; }
+          echo "appcast ok"
+
+      - name: Release notes
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          PREVIOUS: ${{ steps.version.outputs.previous }}
+          CLIFF_CONFIG: ${{ inputs.cliff-config }}
+          NOTES_COMMAND: ${{ inputs.notes-command }}
+          MIN_SYSTEM: ${{ inputs.minimum-system-version }}
+        run: |
+          set -euo pipefail
+          export NOTES_FILE="$RUNNER_TEMP/notes.md"
+          export TAG PREVIOUS VERSION
+          if [ -n "$NOTES_COMMAND" ]; then
+            eval "$NOTES_COMMAND"
+          elif [ -n "$CLIFF_CONFIG" ]; then
+            git-cliff --config "$CLIFF_CONFIG" --unreleased --tag "$TAG" --strip all > "$NOTES_FILE"
+          else
+            echo "$APP_NAME for macOS $VERSION." > "$NOTES_FILE"
+          fi
+          footer=""
+          [ -z "$MIN_SYSTEM" ] || footer="Requires macOS ${MIN_SYSTEM%.0} or later. "
+          printf '\n%sSHA-256: %s.sha256.\n' "$footer" "$(basename "$DMG")" >> "$NOTES_FILE"
+          cat "$NOTES_FILE"
+          echo "NOTES=$NOTES_FILE" >> "$GITHUB_ENV"
+
+      # Everything above passed; only now do the tag and the release exist. --latest=false is
+      # make_latest=false: /releases/latest stays where it was (a CLI's, for instance).
+      - name: Publish the release
+        if: ${{ !inputs.dry-run }}
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          TITLE: ${{ inputs.release-title }}
+          NOTES_HEADER: ${{ inputs.release-notes-header }}
+          PRERELEASE: ${{ inputs.prerelease }}
+          SPARKLE: ${{ inputs.sparkle }}
+          APPCAST_TAG: ${{ inputs.appcast-tag }}
+        run: |
+          set -euo pipefail
+          title="${TITLE:-$APP_NAME for macOS $VERSION}"
+          if [ -n "$NOTES_HEADER" ]; then
+            { printf '%s\n\n' "$NOTES_HEADER"; cat "$NOTES"; } >"$NOTES.tmp"
+            mv "$NOTES.tmp" "$NOTES"
+          fi
+          pre=()
+          [ "$PRERELEASE" != "true" ] || pre=(--prerelease)
+          assets=("$DMG" "$DMG.sha256")
+          [ "$SPARKLE" != "true" ] || assets+=("$APPCAST_DIR/appcast.xml")
+          before="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name 2>/dev/null || true)"
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "$title" --notes-file "$NOTES" --latest=false "${pre[@]}" "${assets[@]}"
+
+          # The feed release is a prerelease as well, so neither /releases/latest nor a
+          # release listing that skips prereleases ever picks it.
+          if [ "$SPARKLE" = "true" ]; then
+            if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$APPCAST_TAG" --jq .id >/dev/null 2>&1
+            then
+              gh release upload "$APPCAST_TAG" "$APPCAST_DIR/appcast.xml" \
+                --repo "$GITHUB_REPOSITORY" --clobber
+            else
+              gh release create "$APPCAST_TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+                --title "$APP_NAME for macOS: update feed" --prerelease --latest=false \
+                --notes "The Sparkle appcast $APP_NAME.app checks for updates. Rewritten by every $TAG_PREFIX release; not a release itself." \
+                "$APPCAST_DIR/appcast.xml"
+            fi
+          fi
+
+          after="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name 2>/dev/null || true)"
+          if [ "$after" != "$before" ]; then
+            echo "/releases/latest moved from '$before' to '$after'" >&2
+            if [ -n "$before" ]; then
+              gh release edit "$before" --repo "$GITHUB_REPOSITORY" --latest
+            fi
+            exit 1
+          fi
+
+      - name: Remove the keychain
+        if: always()
+        run: |
+          if [ -n "${KEYCHAIN:-}" ]; then
+            security delete-keychain "$KEYCHAIN" || true
+          fi
+
+  # A failed app release opens or comments on a `release-failure` issue that mentions and
+  # assigns the maintainer: GitHub cannot filter Actions notifications per workflow. Its own
+  # job, so the signing job gains no permissions. A dry run is not a release.
+  notify-failure:
+    name: notify on failure
+    needs: release
+    if: >-
+      always() && inputs.notify-maintainer != '' && !inputs.dry-run
+      && needs.release.result == 'failure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read # failed job names
+      issues: write
+    steps:
+      - uses: $/.github/actions/notify-release-failure # nosemgrep: github-actions-mutable-action-tag
+        with:
+          ref: ${{ inputs.tag-prefix }}${{ inputs.version }}
+          needs: ${{ toJSON(needs) }}
+          maintainer: ${{ inputs.notify-maintainer }}

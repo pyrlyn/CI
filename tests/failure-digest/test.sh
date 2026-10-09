@@ -66,13 +66,13 @@ esac
 GH
 chmod +x "$tmp/bin/gh"
 
-repos="pyrlyn/infra pyrlyn/rtok,pyrlyn/ketch
+repos="pyrlyn/ci pyrlyn/rtok,pyrlyn/ketch
 pyrlyn/cox pyrlyn/runa"
 now=1790834400 # 2026-10-01T06:00:00Z, 09:00 EEST
-setup() { rm -rf "$tmp/fake"; mkdir -p "$tmp/fake"/pyrlyn_{infra,rtok,ketch,cox,runa}; : >"$tmp/fake/log"; }
+setup() { rm -rf "$tmp/fake"; mkdir -p "$tmp/fake"/pyrlyn_{ci,rtok,ketch,cox,runa}; : >"$tmp/fake/log"; }
 run_digest() {
   env -u LABEL -u WHO -u RELEASE_LABEL -u SINCE_HOURS -u DIGEST_TZ PATH="$tmp/bin:$PATH" \
-    FAKE="$tmp/fake" REPOS="$repos" GH_REPO=pyrlyn/infra NOW="$now" GH_TOKEN=fake bash "$script"
+    FAKE="$tmp/fake" REPOS="$repos" GH_REPO=pyrlyn/ci NOW="$now" GH_TOKEN=fake bash "$script"
 }
 run() { # <id> <name> <event> <branch> <created> <conclusion>
   jq -cn --argjson id "$1" --arg name "$2" --arg event "$3" --arg branch "$4" \
@@ -122,7 +122,7 @@ for want in '@listepo failures in the last 24h (since 2026-09-30 09:00 EEST):' \
   '- **release-plz** on `main` (workflow_dispatch), 2026-10-01 04:00 EEST: [run](https://github.com/x/actions/runs/31); failed jobs: none listed (startup_failure)'; do
   if has "$tmp/digest.md" "$want"; then ok "digest has: ${want:0:60}"; else bad "digest lacks: $want"; fi
 done
-for unwanted in 'pyrlyn/infra' 'pyrlyn/runa' 'runs/12)' 'runs/13)' 'runs/17)' 'runs/18)' 'runs/51)' 'green'; do
+for unwanted in 'pyrlyn/ci' 'pyrlyn/runa' 'runs/12)' 'runs/13)' 'runs/17)' 'runs/18)' 'runs/51)' 'green'; do
   if has "$tmp/digest.md" "$unwanted"; then bad "digest must not have: $unwanted"; else ok "digest omits: $unwanted"; fi
 done
 expect "24h window in the runs query" has "$f/log" 'created=>=2026-09-30T06:00:00Z'
@@ -150,7 +150,7 @@ f="$tmp/fake"
 out="$(run_digest 2>&1)"
 refute "silent day: no issue, label or comment call" grep -qE '^gh (issue|label)' "$f/log"
 expect "silent day: log line only ($out)" [ "$out" = "No failures in the last 24h across: \
-pyrlyn/infra pyrlyn/rtok pyrlyn/ketch pyrlyn/cox pyrlyn/runa; nothing posted." ]
+pyrlyn/ci pyrlyn/rtok pyrlyn/ketch pyrlyn/cox pyrlyn/runa; nothing posted." ]
 
 # --- release-failure path of the shared script ---------------------------------------------
 setup

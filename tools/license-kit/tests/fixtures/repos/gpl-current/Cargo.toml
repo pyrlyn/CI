@@ -1,0 +1,5 @@
+[workspace]
+members = ["crates/*"]
+
+[workspace.package]
+license = "GPL-3.0-only"

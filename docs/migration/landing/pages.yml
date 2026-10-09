@@ -6,6 +6,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
 concurrency:
@@ -17,7 +18,7 @@ permissions:
 
 jobs:
   pages:
-    uses: pyrlyn/infra/.github/workflows/pages.yml@<SHA> # main
+    uses: pyrlyn/ci/.github/workflows/pages.yml@<SHA> # main
     permissions:
       contents: read
       pages: write

@@ -1,0 +1,71 @@
+name: setup-xcode
+description: >-
+  Select the pyrlyn-pinned Xcode on a GitHub-hosted macOS runner: the newest stable
+  /Applications/Xcode_<version>*.app, through `sudo xcode-select -s`. Fails with an error when
+  the image has no such Xcode. A no-op on non-macOS runners and with an empty `version`.
+# Runner images install every Xcode as /Applications/Xcode_<x.y[.z]>[_beta[_N]].app plus
+# version symlinks (Xcode_27.app, Xcode_27.0.app, Xcode_27.0.0.app, ...). Symlinks are resolved
+# so an install counts once, and an install whose real path is a beta or release candidate is
+# skipped: `version: "27"` on the xcode-27 image selects 27.0, not the 27.2 beta. Pass a fuller
+# version ("27.1") to narrow the match. Only GitHub's `xcode-27` image ships Xcode 27
+# (macos-26 / macos-latest carry Xcode 26.x).
+inputs:
+  version:
+    description: >-
+      Xcode version prefix to select: a major ("27") or major.minor ("27.1"). Empty keeps the
+      runner image's default Xcode.
+    required: false
+    default: "27"
+outputs:
+  path:
+    description: The selected Xcode.app (real path); empty when nothing was selected.
+    value: ${{ steps.select.outputs.path }}
+  version:
+    description: The selected Xcode's version (CFBundleShortVersionString), e.g. 27.0.
+    value: ${{ steps.select.outputs.version }}
+runs:
+  using: composite
+  steps:
+    - name: Select Xcode ${{ inputs.version }}
+      id: select
+      if: runner.os == 'macOS' && inputs.version != ''
+      shell: bash
+      env:
+        XCODE_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        v="$XCODE_VERSION"
+        if [[ ! "$v" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
+          echo "::error title=setup-xcode::version '$v' is not a version like 27 or 27.1"
+          exit 1
+        fi
+        shopt -s nullglob
+        best="" best_version=""
+        for app in "/Applications/Xcode_$v.app" "/Applications/Xcode_$v".*.app \
+          "/Applications/Xcode_${v}_"*.app; do
+          real="$(cd "$app" 2>/dev/null && pwd -P)" || continue
+          case "$(tr '[:upper:]' '[:lower:]' <<<"${app##*/} ${real##*/}")" in
+            *beta* | *_rc* | *release_candidate*) continue ;;
+          esac
+          plist="$real/Contents/Info.plist"
+          [ -f "$plist" ] || continue
+          ver="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")"
+          # "27" must not match 270 or 2.7: the installed version is v itself or v.<more>.
+          [ "$ver" = "$v" ] || [[ "$ver" == "$v".* ]] || continue
+          if [ -z "$best" ] \
+            || [ "$(printf '%s\n%s\n' "$best_version" "$ver" | sort -V | tail -n1)" = "$ver" ]; then
+            best="$real" best_version="$ver"
+          fi
+        done
+        if [ -z "$best" ]; then
+          echo "::error title=setup-xcode::no stable Xcode $v under /Applications on this" \
+            "runner (${ImageOS:-} ${ImageVersion:-}). Use a runner image that ships it" \
+            "(Xcode 27: runs-on xcode-27) or pass another xcode-version."
+          ls -d /Applications/Xcode*.app >&2 || true
+          exit 1
+        fi
+        sudo xcode-select -s "$best/Contents/Developer"
+        echo "Selected $best (Xcode $best_version)"
+        xcodebuild -version
+        echo "path=$best" >> "$GITHUB_OUTPUT"
+        echo "version=$best_version" >> "$GITHUB_OUTPUT"

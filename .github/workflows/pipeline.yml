@@ -177,10 +177,12 @@ on:
         required: false
         default: false
       snyk:
-        description: Run snyk.yml (skips itself without SNYK_TOKEN).
+        description: >-
+          Run snyk.yml (skips itself without SNYK_TOKEN). Off by default org-wide; the gate
+          treats the skipped job as passed. `true` turns it back on.
         type: boolean
         required: false
-        default: true
+        default: false
       snyk-args:
         description: snyk.yml `args`.
         type: string

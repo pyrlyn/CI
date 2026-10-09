@@ -1,0 +1,41 @@
+name: commits
+description: >-
+  Fail when a pull request commit subject is not a Conventional Commit. Every commit from the
+  base branch to HEAD is checked, merge commits and git's own "Revert ..." subjects excepted,
+  and every offender is listed before the step fails. `grep` matches `type(scope)!: subject`
+  against `types`; `commitlint` runs the repository's own commitlint config (npm ci, Node from
+  mise.toml) on each commit. Outside pull_request events there is no range: a notice, success.
+  Needs a checkout with full history (actions/checkout `fetch-depth: 0`). Usable in a caller's
+  own job, so a required check named `commits` keeps its name.
+inputs:
+  tool:
+    description: grep | commitlint.
+    required: false
+    default: grep
+  types:
+    description: Space-separated commit types for `grep`.
+    required: false
+    default: feat fix docs ci test chore style refactor perf build
+  working-directory:
+    description: Directory with package.json and the commitlint config (commitlint only).
+    required: false
+    default: "."
+runs:
+  using: composite
+  steps:
+    - if: inputs.tool == 'commitlint' && github.event_name == 'pull_request'
+      uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
+      with:
+        working_directory: ${{ inputs.working-directory }}
+        install_args: node
+    - if: inputs.tool == 'commitlint' && github.event_name == 'pull_request'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: npm ci --no-audit --no-fund
+    - shell: bash
+      env:
+        TOOL: ${{ inputs.tool }}
+        TYPES: ${{ inputs.types }}
+        BASE_REF: ${{ github.base_ref }}
+        WORKDIR: ${{ inputs.working-directory }}
+      run: bash "$GITHUB_ACTION_PATH/commits.sh"

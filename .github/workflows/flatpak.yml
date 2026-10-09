@@ -1,0 +1,135 @@
+name: flatpak
+
+# Reusable Flatpak build. Installs the SDK named by the caller's manifest from a Flatpak
+# remote, runs flatpak-builder, and uploads one .flatpak bundle. No signing secret: a Flatpak
+# repo signature is a later Flathub step, not this build.
+#
+#   jobs:
+#     flatpak:
+#       permissions:
+#         contents: read
+#         actions: write # cancel-run
+#       uses: pyrlyn/ci/.github/workflows/flatpak.yml@<sha>
+#       with:
+#         manifest: desktop/linux/app.mailune.yml
+#         app-id: app.mailune.Mailune
+on:
+  workflow_call:
+    inputs:
+      manifest:
+        description: Flatpak manifest path, relative to the repository root.
+        type: string
+        required: true
+      app-id:
+        description: Application id passed to flatpak build-bundle.
+        type: string
+        required: true
+      bundle:
+        description: Bundle path relative to the repository root.
+        type: string
+        required: false
+        default: dist/app.flatpak
+      arch:
+        description: Flatpak architecture.
+        type: string
+        required: false
+        default: x86_64
+      branch:
+        description: Bundle branch. Empty uses the manifest default.
+        type: string
+        required: false
+        default: ""
+      repo-url:
+        description: Flatpak remote the SDK and runtime are installed from.
+        type: string
+        required: false
+        default: https://dl.flathub.org/repo/flathub.flatpakrepo
+      runs-on:
+        description: Linux runner label.
+        type: string
+        required: false
+        default: ubuntu-latest
+      timeout-minutes:
+        description: Timeout of the build job.
+        type: number
+        required: false
+        default: 90
+      cancel-run-on-failure:
+        description: >-
+          When the job fails, cancel the whole workflow run. The calling job must grant
+          `actions: write`.
+        type: boolean
+        required: false
+        default: true
+    outputs:
+      bundle:
+        description: Bundle path relative to the repository root.
+        value: ${{ jobs.flatpak.outputs.bundle }}
+
+permissions:
+  contents: read
+  actions: write # cancel-run on failure
+
+jobs:
+  flatpak:
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    outputs:
+      bundle: ${{ steps.build.outputs.bundle }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Hosted runners have no /dev/fuse, so the builder uses --disable-rofiles-fuse.
+      - name: Install flatpak
+        env:
+          REPO_URL: ${{ inputs.repo-url }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+          flatpak remote-add --user --if-not-exists flathub "$REPO_URL"
+
+      - name: Build the bundle
+        id: build
+        env:
+          MANIFEST: ${{ inputs.manifest }}
+          APP_ID: ${{ inputs.app-id }}
+          BUNDLE: ${{ inputs.bundle }}
+          ARCH: ${{ inputs.arch }}
+          BRANCH: ${{ inputs.branch }}
+        run: |
+          set -euo pipefail
+          [[ "$APP_ID" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "invalid app-id" >&2; exit 1; }
+          [[ "$ARCH" =~ ^[A-Za-z0-9_]+$ ]] || { echo "invalid arch" >&2; exit 1; }
+          [[ "$BRANCH" =~ ^[A-Za-z0-9._-]*$ ]] || { echo "invalid branch" >&2; exit 1; }
+          case "$MANIFEST" in
+            /*|*..*) echo "manifest must be a relative path" >&2; exit 1 ;;
+          esac
+          case "$BUNDLE" in
+            /*|*..*) echo "bundle must be a relative path" >&2; exit 1 ;;
+          esac
+          [ -f "$MANIFEST" ] || { echo "no manifest at $MANIFEST" >&2; exit 1; }
+          mkdir -p "$(dirname "$BUNDLE")"
+          # --user keeps the SDK out of the system installation. --install-deps-from pulls the
+          # runtime the manifest names; this workflow does not guess one.
+          flatpak-builder --user --disable-rofiles-fuse --install-deps-from=flathub \
+            --force-clean --repo="$RUNNER_TEMP/repo" --arch="$ARCH" \
+            "$RUNNER_TEMP/build" "$MANIFEST"
+          if [ -n "$BRANCH" ]; then
+            flatpak build-bundle --arch="$ARCH" "$RUNNER_TEMP/repo" "$BUNDLE" "$APP_ID" "$BRANCH"
+          else
+            flatpak build-bundle --arch="$ARCH" "$RUNNER_TEMP/repo" "$BUNDLE" "$APP_ID"
+          fi
+          echo "bundle=$BUNDLE" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: flatpak-${{ inputs.arch }}
+          path: ${{ steps.build.outputs.bundle }}
+          if-no-files-found: error
+
+      - name: Cancel the run on failure
+        if: failure() && inputs.cancel-run-on-failure
+        uses: $/.github/actions/cancel-run # nosemgrep: github-actions-mutable-action-tag

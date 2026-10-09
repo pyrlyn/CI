@@ -14,7 +14,8 @@ name: bump
 #            landed is read back (`mergeCommit`), and must have the tested tree and the base
 #            the branch was cut from as its parent.
 #   tag      the tag on THAT commit (git refs API), then the GitHub Release (a draft by
-#            default: cargo-dist with `create-release = false` uploads to it and undrafts it),
+#            default: cargo-dist with `create-release = false` uploads to it and undrafts it;
+#            a prerelease when the caller sets `prerelease`, which it must),
 #            then `release-workflows` dispatched with `--ref <tag> -f tag=<tag>`. A tag or
 #            Release made with GITHUB_TOKEN starts no `push: tags` / `release` workflow, so the
 #            build is always dispatched explicitly.
@@ -65,7 +66,8 @@ on:
         description: >-
           Script run as `<script> <level> <release-script-args>` from the repository root. It
           must make at most one commit and push nothing; it may write `version=` to
-          $GITHUB_OUTPUT. Empty: use `release-plz-update`.
+          $GITHUB_OUTPUT. Empty: `release-plz-update` when set, else scripts/release.sh when
+          the repository has one (executable).
         type: string
         required: false
         default: ""
@@ -109,6 +111,7 @@ on:
           required checks. Dispatched on the bump branch (`gh workflow run <file> --ref
           <branch>`) when there is no BUMP_TOKEN, and on the default branch for
           release-untagged-head. With BUMP_TOKEN the PR's pull_request CI reports them.
+          Empty: ci.yml and pipeline.yml, each that exists and has workflow_dispatch.
         type: string
         required: false
         default: ""
@@ -136,6 +139,27 @@ on:
         type: boolean
         required: false
         default: true
+      prerelease:
+        description: >-
+          Create the GitHub Release as a prerelease. Required, with no default: each caller
+          decides it in its own bump workflow, this workflow decides nothing. A version with a
+          `-` suffix (1.2.3-rc.1) is a prerelease either way.
+        type: boolean
+        required: true
+      release-title-suffix:
+        description: >-
+          Text appended to the Release title (the tag), e.g. " (dev build)". Empty appends
+          nothing.
+        type: string
+        required: false
+        default: ""
+      release-notes-header:
+        description: >-
+          Markdown put above the Release notes (CHANGELOG section, notes-command output or
+          GitHub's generated notes), e.g. a dev-build notice. Empty adds nothing.
+        type: string
+        required: false
+        default: ""
       release-workflows:
         description: >-
           Newline-separated workflow files dispatched after the tag with `--ref <tag> -f
@@ -225,11 +249,11 @@ jobs:
           fetch-depth: 0 # tags decide whether the current version was released
           persist-credentials: true # fetches; pushes go to an explicit URL (PUSH_TOKEN)
       - if: inputs.mise
-        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
         with:
           install_args: ${{ inputs.mise-install-args }}
       - if: inputs.release-script == '' && inputs.release-plz-update
-        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
+        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
           tool: release-plz
 
@@ -259,6 +283,21 @@ jobs:
           push_url="https://x-access-token:${PUSH_TOKEN}@github.com/$R.git"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Defaults. release-script: scripts/release.sh when it exists and neither
+          # release-script nor release-plz-update is set (that combination used to fail).
+          # ci-workflows: ci.yml and pipeline.yml, each that exists and has workflow_dispatch.
+          if [ -z "$SCRIPT" ] && [ "$RELEASE_PLZ" != "true" ] && [ -x scripts/release.sh ]; then
+            SCRIPT=scripts/release.sh
+            echo "release-script: $SCRIPT (default)"
+          fi
+          if [ -z "$(tr -d '[:space:]' <<<"$CI_WORKFLOWS")" ]; then
+            CI_WORKFLOWS=""
+            for w in ci.yml pipeline.yml; do
+              f=".github/workflows/$w"
+              if [ -f "$f" ] && grep -Eq '\bworkflow_dispatch\b' "$f"; then CI_WORKFLOWS+="$w"$'\n'; fi
+            done
+            if [ -n "$CI_WORKFLOWS" ]; then printf 'ci-workflows (default):\n%s' "$CI_WORKFLOWS"; fi
+          fi
           if [ "$HAS_BUMP_TOKEN" != "true" ] && [ -z "$CI_WORKFLOWS" ]; then
             echo "::warning::no BUMP_TOKEN and no ci-workflows: nothing will report the required checks"
           fi
@@ -470,6 +509,9 @@ jobs:
           TAG: ${{ steps.pr.outputs.tag }}
           VERSION: ${{ steps.pr.outputs.version }}
           DRAFT: ${{ inputs.release-draft }}
+          PRERELEASE: ${{ inputs.prerelease }}
+          TITLE_SUFFIX: ${{ inputs.release-title-suffix }}
+          NOTES_HEADER: ${{ inputs.release-notes-header }}
           NOTES_COMMAND: ${{ inputs.notes-command }}
           RELEASE_WORKFLOWS: ${{ inputs.release-workflows }}
         run: |
@@ -491,13 +533,21 @@ jobs:
                        if (index(h, v) == 1 && substr(h, length(v) + 1, 1) !~ /[0-9A-Za-z.+-]/) { on = 1; next } }
               on { print }' >"$NOTES_FILE" || true
           fi
-          args=(--verify-tag --title "$TAG")
+          args=(--verify-tag --title "$TAG$TITLE_SUFFIX")
           if [ -s "$NOTES_FILE" ] && grep -q '[^[:space:]]' "$NOTES_FILE"; then
+            if [ -n "$NOTES_HEADER" ]; then
+              { printf '%s\n\n' "$NOTES_HEADER"; cat "$NOTES_FILE"; } >"$NOTES_FILE.tmp"
+              mv "$NOTES_FILE.tmp" "$NOTES_FILE"
+            fi
             args+=(--notes-file "$NOTES_FILE")
           else
+            # --notes is prepended to the generated notes.
             args+=(--generate-notes)
+            [ -n "$NOTES_HEADER" ] && args+=(--notes "$NOTES_HEADER")
           fi
-          [[ "$VERSION" == *-* ]] && args+=(--prerelease)
+          if [ "$PRERELEASE" = "true" ] || [[ "$VERSION" == *-* ]]; then
+            args+=(--prerelease)
+          fi
           [ "$DRAFT" = "true" ] && args+=(--draft)
           gh release create "$TAG" -R "$R" "${args[@]}"
 

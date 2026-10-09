@@ -14,6 +14,15 @@ name: sonarcloud
 on:
   workflow_call:
     inputs:
+      skip-drafts:
+        description: >-
+          Skip every job on a draft pull request: a job-level `if`, so no runner starts. The
+          caller's `pull_request` trigger must list `ready_for_review` in `types` so the run
+          starts when the draft is marked ready. false runs drafts like any other pull request
+          (ci.yml passes its `skip-drafts` config key).
+        type: boolean
+        required: false
+        default: true
       cancel-run-on-failure:
         description: >-
           When a job fails, cancel the whole workflow run (every other running or queued
@@ -91,7 +100,9 @@ env:
 
 jobs:
   sonarcloud:
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    if: >-
+      !inputs.skip-drafts
+      || github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
@@ -114,7 +125,7 @@ jobs:
           persist-credentials: false
 
       - if: env.SONAR_TOKEN != '' && inputs.mise
-        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
         with:
           working_directory: ${{ inputs.project-base-dir }}
           install_args: ${{ inputs.mise-install-args }}
@@ -140,7 +151,7 @@ jobs:
             ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
 
       - if: env.SONAR_TOKEN != '' && inputs.rust
-        uses: taiki-e/install-action@dfae9bf3d6f6c6f20ef4ebb3486c01a51341ff12 # v2.87.18
+        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
           tool: cargo-llvm-cov
 
@@ -182,7 +193,7 @@ jobs:
       - name: SonarCloud scan
         if: env.SONAR_TOKEN != ''
         continue-on-error: ${{ inputs.soft-fail }}
-        uses: SonarSource/sonarqube-scan-action@ba9859eae8dd6bd29e412f25ddbbef3d032000f4 # v8.2.2
+        uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9 # v8.3.0
         with:
           projectBaseDir: ${{ inputs.project-base-dir }}
           args: ${{ steps.args.outputs.args }}

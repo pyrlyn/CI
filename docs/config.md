@@ -37,7 +37,8 @@ the same JSON.
 - A skipped required check counts as passed, so `gate` runs with `always()` and fails on any
   non-success except jobs listed in `skip-ok` (disabled by config or event filter). A failed
   `config` job fails the gate. On a draft PR with `skip-drafts`, the gate itself is skipped
-  (same as pipeline.yml).
+  (same as pipeline.yml). ci.yml also passes `skip-drafts` on to the workflows it calls, so
+  `skip-drafts: false` runs them on drafts (docs/reusable-workflows.md, "Draft pull requests").
 - Permissions are validated for every nested job up front, even disabled ones: the caller
   grants the union (`contents: read`, `security-events: write`, `pull-requests: read`,
   `actions: write`) regardless of what the config enables.
@@ -53,13 +54,20 @@ version: 1                      # required
 cancel-run-on-failure: true     # cancel the run when a job fails (input "false" overrides)
 skip-drafts: true               # draft PRs run nothing
 upload-sarif: auto              # true | false | auto (= public repositories)
+docs-only:                      # skip heavy checks on documentation-only changes (below)
+  enabled: false
+  events: [pull_request, merge_group]
+  paths: []                     # extended regexes of more documentation files
+  exclude: []                   # extended regexes of Markdown that is code
+  base-exclude: ['^(README|CHANGELOG)\.md$']  # added to `exclude`; [] drops it
 
 # Each check: enabled (true | false | auto = public repos only), events (list of
-# github.event_name; [] = all) + the inputs of the matching reusable workflow.
+# github.event_name; [] = all), docs-only (runs on a docs-only change; false except lint)
+# + the inputs of the matching reusable workflow.
 rust:       {enabled: false, events: [], matrix: [], rust-version: "", fmt-runs-on: ubuntu-latest,
              working-directory: ".", mise-install-args: rust, clippy-args: "", tools: "",
              setup-command: "", test-command: "...", doc-tests: true, build-command: "...",
-             package-args: --workspace, feature-args: --all-features, msrv: "",
+             package-args: --workspace, feature-args: --all-features, locked: auto, msrv: "",
              msrv-command: "...", timeout-minutes: 60, cache-all-refs: false,
              changed-only: false, full-package-args: --workspace}
 dotnet:     {enabled: true, dotnet-version: "", working-directory: ".", test-command: "",
@@ -67,11 +75,17 @@ dotnet:     {enabled: true, dotnet-version: "", working-directory: ".", test-com
 codeql:     {enabled: auto, languages: [actions], build-mode: none, build-command: "",
              queries: security-and-quality, config-file: "", runs-on: ubuntu-latest}
 semgrep:    {enabled: auto, config: p/default, extra-args: "", fail-on-findings: false}
-snyk:       {enabled: auto, args: --all-projects, monitor: true}
-sonarcloud: {enabled: false, organization: "", project-key: "", args: "", project-base-dir: ".",
+snyk:       {enabled: false, args: --all-projects, monitor: true}  # off org-wide (switch)
+sonarcloud: {enabled: false, events: [push, pull_request, workflow_dispatch], organization: "",
+             project-key: "", args: "", project-base-dir: ".",
              mise: true, mise-install-args: "", rust: false, setup-command: "",
              coverage-command: "", soft-fail: true, timeout-minutes: 60}
-lint:       {enabled: true, actionlint-version: 1.7.12, args: "", extra-command: ""}
+lint:       {enabled: true, actionlint-version: 1.7.12, ignore-generated: true, args: "",
+             extra-command: ""}
+license:    {enabled: false, docs-only: true, canonical-ref: main, check-headers: false,
+             header-exclude: ""}                     # -> `<caller job> / license / license-check`
+commits:    {enabled: false, events: [pull_request], docs-only: true, tool: grep,
+             types: [feat, fix, docs, ci, test, chore, style, refactor, perf, build]}
 
 jobs:                           # repository-specific jobs -> `ci / <name>`
   - name: footprint             # required
@@ -91,9 +105,27 @@ jobs:                           # repository-specific jobs -> `ci / <name>`
     timeout-minutes: 60
     fetch-depth: 1
     allow-failure: false
+    docs-only: false            # true = also runs on a docs-only change (e.g. a docs linter)
 ```
 
 Unknown keys fail the `config` job (typos never silently disable a check).
+
+Defaults that replace per-repository workarounds:
+
+- `docs-only.base-exclude`: README.md and CHANGELOG.md at the root are never documentation-only
+  (they ship in packages and release notes). It is added to the repository's own `exclude`
+  list, which no longer needs to repeat it.
+- `rust.locked: auto`: `--locked` for clippy, check, the doctests and the default
+  `test-command`/`build-command` whenever the workspace has a Cargo.lock (`clippy-args:
+  --locked` is no longer needed and gets no second flag).
+- `lint.ignore-generated: true`: actionlint skips workflow files generated by cargo-dist
+  (`release.yml`), so lint stays on in repositories that ship with dist.
+- `sonarcloud.events`: push, pull_request and workflow_dispatch, not the weekly schedule.
+- `license` runs license-check.yml inside ci.yml (a repository's own `license-check.yml`
+  caller is no longer needed); `commits` runs the `commits` action (Conventional Commits
+  subjects of a pull request; `tool: commitlint` uses the repository's commitlint config). A
+  repository whose ruleset requires a check named `commits` keeps its own job and calls
+  `pyrlyn/ci/.github/actions/commits@<sha>` in it, so the check name stays.
 
 `dotnet` is on by default and costs one short job: it passes as a no-op until the repository
 has a .NET project, then runs the full `dotnet test` (ci-dotnet.yml). `rust.changed-only` and
@@ -101,3 +133,50 @@ has a .NET project, then runs the full `dotnet test` (ci-dotnet.yml). `rust.chan
 ecosystem; a dependency manifest or lock change always runs the full suite (see
 "Dependency-driven suite selection" in docs/reusable-workflows.md).
 Example: tests/fixtures/infra.yml (self-test), docs/migration/*/infra.yml.
+
+### Docs-only changes
+
+`docs-only.enabled: true` makes a pull request (or merge group; `docs-only.events`) that
+changes documentation only skip every check and custom job whose own `docs-only` is false:
+Rust, .NET, CodeQL, Semgrep, Snyk and SonarCloud by default, while lint and custom jobs with
+`docs-only: true` still run. The skipped jobs go to `skip-ok`, so `gate` (and a required
+`ci / gate` or a caller's `gate`) reports success instead of leaving a required check
+pending, which a workflow-level `paths-ignore` would do.
+
+Detection is the `changes` action (`docs_only` output; docs/reusable-workflows.md): the
+pull request's three-dot diff, i.e. `git diff --name-only BASE...HEAD`, from the compare API.
+It is docs-only when there is a diff, nothing forced the run, and every changed path (both
+sides of a rename) matches `\.md$` (any case, any directory, e.g. `docs/uk/*.md`) or a
+`paths` regex, and none matches an `exclude` regex. It fails open: no diff (schedule,
+dispatch), a `.github/`, `mise.toml` or `.tool-versions` change, 300+ files or an API error
+mean not docs-only, so everything runs. Pushes to main are not in the default `events`.
+
+List in `exclude` every Markdown file that is code: embedded in a binary (`include_str!`),
+shipped in a package (plugin or skill files, a crate README), executed or asserted on by a
+test the skipped checks would run, or read by a release (CHANGELOG). A docs-only change to
+Markdown that a test validates still needs that test: give the repository a cheap custom job
+(or local job) with `docs-only: true` that runs it.
+
+The config action exposes the verdict as its `docs-only` output (and ci.yml as the `docs-only`
+workflow output), so a caller with local jobs can run the action itself and skip them too. The
+verdict does not depend on `skip-drafts`: on a draft pull request `draft-skip` turns every check
+off as before, and `docs-only` is still `true` for a documentation-only change, so a caller
+that runs its local jobs on drafts skips their heavy work there too:
+
+```yaml
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      docs-only: ${{ steps.config.outputs.docs-only }}
+    steps:
+      - id: config
+        uses: pyrlyn/ci/.github/actions/config@<sha> # main
+  heavy:
+    needs: changes
+    if: needs.changes.outputs.docs-only != 'true'
+```
+
+A required check from a matrix job, or from a job of a called workflow, cannot be skipped at
+job level (the skipped job reports one check under its raw name and the required ones wait).
+For ci-rust.yml pass `skip: ${{ needs.changes.outputs.docs-only == 'true' }}`: the matrix still
+expands and every step is a no-op. Gate the steps of a local matrix job the same way.

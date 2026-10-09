@@ -19,8 +19,15 @@ permissions:
 
 jobs:
   sync:
-    uses: listepo/infra/.github/workflows/sync-docs.yml@<SHA> # main
+    uses: pyrlyn/ci/.github/workflows/sync-docs.yml@<SHA> # main
     permissions:
       contents: read
+    # Internal pages beyond the shared list (research, qa, design, plans, runbooks, ...), one
+    # rsync exclude pattern per line; omit when the shared list covers them.
+    # with:
+    #   extra-excludes: |
+    #     compat.md
+    #     i18n.md
+    #   locales: ru uk # docs/<lang>/ translations and localized site.md cards
     secrets:
       SITE_DEPLOY_KEY: ${{ secrets.SITE_DEPLOY_KEY }}

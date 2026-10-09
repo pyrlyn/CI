@@ -1,6 +1,6 @@
 name: macos-sign
 description: >-
-  macOS Developer ID codesigning and notarization, extracted from rtok/dunnage/ketch
+  macOS Developer ID codesigning and notarization, extracted from rtok/swarfr/ketch
   build-setup.yml and ketch build-check.yml. All secrets are optional: without them the action
   skips with a notice, unless `require` is true. A no-op on non-macOS runners.
 # Modes:

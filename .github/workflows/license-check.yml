@@ -1,0 +1,127 @@
+name: license-check
+
+# Fails when the caller's copies of the license files drift from pyrlyn/ci's canonical ones
+# (licenses/, mapped per repository in licenses/targets.yml: the GPL-3.0 text, the commercial
+# license and the license-sync block of the README). The job summary shows a unified diff of
+# every drifted file. Comparison is byte-exact: CRLF line endings, a different final newline
+# and a missing file are drift. The canonical files and tools/license-kit (the checker) are
+# read from pyrlyn/ci at `canonical-ref` (default main, the branch the sync writes from),
+# not from the pinned commit of this workflow, so a caller's pin never lags the sync PR.
+# Optionally (`check-headers`) every tracked source file must carry an
+# SPDX-License-Identifier header in its first 10 lines.
+#
+# Caller job permissions: contents: read, actions: write (cancel-run).
+on:
+  workflow_call:
+    inputs:
+      skip-drafts:
+        description: >-
+          Skip every job on a draft pull request: a job-level `if`, so no runner starts. The
+          caller's `pull_request` trigger must list `ready_for_review` in `types` so the run
+          starts when the draft is marked ready. false runs drafts like any other pull request
+          (ci.yml passes its `skip-drafts` config key).
+        type: boolean
+        required: false
+        default: true
+      canonical-ref:
+        description: >-
+          Ref of pyrlyn/ci to read licenses/ and tools/license-kit from: a branch, tag, or
+          commit, not a pull request ref (refs/pull/...).
+        type: string
+        required: false
+        default: main
+      check-headers:
+        description: Also require an SPDX-License-Identifier header in every source file.
+        type: boolean
+        required: false
+        default: false
+      header-exclude:
+        description: >-
+          Extra path prefixes or substrings (one per line) excluded from the header check, on
+          top of the built-in ones (target/, node_modules/, vendor/, fixtures/, generated
+          files, ...).
+        type: string
+        required: false
+        default: ""
+      cancel-run-on-failure:
+        description: >-
+          When the check fails, cancel the whole workflow run. The calling job must grant
+          `actions: write`.
+        type: boolean
+        required: false
+        default: true
+
+# Called only: the github context is the caller's, so the run gets a group of its own and the
+# caller's workflow-level `concurrency` cancels older runs (as in lint.yml).
+concurrency:
+  group: license-check-call-${{ github.run_id }}-${{ github.run_attempt }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write # cancel-run on failure
+
+jobs:
+  check:
+    if: >-
+      !inputs.skip-drafts
+      || github.event_name != 'pull_request' || !github.event.pull_request.draft
+    name: license-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # inputs.canonical-ref, for the fetch below. actions/checkout's ref on a reusable workflow
+    # is classified as a pull-request head checkout, so the canonical commit is fetched afterwards.
+    env:
+      CANONICAL: ${{ inputs.canonical-ref || 'main' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: repo
+          persist-credentials: false
+      - name: Check the canonical ref
+        run: |
+          set -euo pipefail
+          case "$CANONICAL" in
+            -*|*$'\n'*|*$'\r'*|refs/pull/*)
+              echo "::error::canonical-ref must be a branch, tag, or commit, not a pull request ref" >&2
+              exit 1
+              ;;
+          esac
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: pyrlyn/ci
+          path: infra
+          persist-credentials: false
+          sparse-checkout: |
+            licenses
+            tools/license-kit
+      - name: Fetch the canonical ref
+        working-directory: infra
+        run: |
+          set -euo pipefail
+          git fetch --depth 1 origin "$CANONICAL"
+          git checkout --detach FETCH_HEAD
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: infra/tools/license-kit -> target
+          shared-key: license-kit
+      - name: Build license-kit
+        run: cargo build --release --locked --manifest-path infra/tools/license-kit/Cargo.toml
+      - name: Compare with pyrlyn/ci's canonical license files
+        env:
+          REPO: ${{ github.repository }}
+          CHECK_HEADERS: ${{ inputs.check-headers && 'true' || 'false' }}
+          HEADER_EXCLUDE: ${{ inputs.header-exclude }}
+        run: |
+          set -euo pipefail
+          args=(drift-check --config infra/licenses/targets.yml --repo "$REPO")
+          if [ "$CHECK_HEADERS" = true ]; then
+            args+=(--headers)
+            while IFS= read -r pat; do
+              if [ -n "$pat" ]; then args+=(--header-exclude "$pat"); fi
+            done <<<"$HEADER_EXCLUDE"
+          fi
+          infra/tools/license-kit/target/release/license-kit "${args[@]}" repo
+      - name: Cancel the run on failure
+        if: failure() && inputs.cancel-run-on-failure
+        uses: $/.github/actions/cancel-run # nosemgrep: github-actions-mutable-action-tag

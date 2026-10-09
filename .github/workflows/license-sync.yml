@@ -1,0 +1,70 @@
+name: license-sync
+
+# Runs `license-kit sync`: each GPL target in licenses/targets.yml gets a draft PR from
+# chore/license-sync when its copies differ from licenses/ (ready with auto-merge when the
+# target sets `auto-merge: true`). Writing needs the LICENSE_SYNC_TOKEN org secret (fine-grained
+# PAT or GitHub App token; Contents, Pull requests and Workflows read/write on the targets).
+# Without it the run is a dry run (read-only, public repos) and then fails with a clear error.
+# Separate from sync-docs.yml, whose deploy key only reaches pyrlyn/landing.
+on:
+  push:
+    branches: [main]
+    paths:
+      - licenses/**
+      - .github/workflows/license-sync.yml
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Report what would change without writing.
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: tools/license-kit -> target
+          shared-key: license-kit
+      - run: cargo build --release --locked --manifest-path tools/license-kit/Cargo.toml
+      - name: Sync
+        env:
+          SYNC_TOKEN: ${{ secrets.LICENSE_SYNC_TOKEN }}
+          READ_TOKEN: ${{ github.token }}
+          DRY_RUN_INPUT: ${{ inputs.dry-run && 'true' || 'false' }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          missing=false
+          if [ -n "$SYNC_TOKEN" ]; then
+            export GH_TOKEN="$SYNC_TOKEN"
+            dry_run="$DRY_RUN_INPUT"
+          else
+            missing=true
+            export GH_TOKEN="$READ_TOKEN"
+            dry_run=true
+            echo "::warning::LICENSE_SYNC_TOKEN is not set; running as a dry run."
+          fi
+          args=(sync --config licenses/targets.yml --org pyrlyn --source "@${SHA:0:7}")
+          if [ "$dry_run" = true ]; then args+=(--dry-run); fi
+          tools/license-kit/target/release/license-kit "${args[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$missing" = true ]; then
+            msg="LICENSE_SYNC_TOKEN is not set, so nothing was written (dry run above)."
+            msg+=" Add an org secret LICENSE_SYNC_TOKEN with Contents, Pull requests and"
+            msg+=" Workflows read/write on the targets in licenses/targets.yml."
+            echo "::error title=LICENSE_SYNC_TOKEN missing::$msg"
+            printf '\n**Error:** %s\n' "$msg" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
