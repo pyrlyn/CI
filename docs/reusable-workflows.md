@@ -9,7 +9,7 @@ repository. All third-party actions are pinned to full commit SHAs.
 | `ci-rust.yml` | fmt, clippy, check, tests on a shared OS/target matrix, optional MSRV |
 | `ci-dotnet.yml` | `dotnet test` for every solution; a passing no-op until a .NET project exists |
 | `changes.yml` | classify changed files by ecosystem (Rust, Swift, .NET) for suite selection |
-| `lint.yml` | actionlint (+ shellcheck) on the caller's workflows; cargo-dist's generated `release.yml` is skipped (`ignore-generated`) |
+| `lint.yml` | actionlint (+ shellcheck) on the caller's workflows; cargo-dist's generated `release.yml` is skipped (`ignore-generated`). In this repository the same file also runs on pull requests and on every push to `main` |
 | `codeql.yml` | CodeQL per language, SARIF to code scanning |
 | `semgrep.yml` | Semgrep OSS (`p/default`), SARIF to code scanning |
 | `snyk.yml` | Snyk Open Source; off by default (switch), skipped without a token |

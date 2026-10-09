@@ -7,7 +7,7 @@ Shared, SHA-pinned reusable GitHub Actions workflows (mainly `ci-rust.yml`, a fi
 | # | Status | Priority | Complexity | Readiness | Agent |
 | --- | --- | --- | --- | --- | --- |
 | T1 | todo | P1 | 1 | 0% | |
-| T2 | todo | P2 | 1 | 0% | |
+| T2 | done | P2 | 1 | 100% | |
 | T3 | todo | P3 | 2 | 0% | |
 | T4 | todo | P3 | 1 | 0% | |
 
@@ -19,7 +19,7 @@ Local `main` sits 96 commits behind; the checked-out `feat/ci-rust-pin-check` br
 
 ### T2. Run actionlint on pushes to main
 
-`.github/workflows/lint.yml` triggers only on `pull_request` and `workflow_dispatch`, so direct commits to main skip it. Done means: `push: branches: [main]` is added to the trigger list (verify against current origin/main first).
+Done. `.github/workflows/lint.yml` now triggers on `push: branches: [main]` as well as `pull_request` and `workflow_dispatch`. A merge or a direct commit to main runs actionlint. `workflow_call` is unchanged, so SHA-pinned callers are unaffected.
 
 ### T3. Extend self-test coverage to the custom inputs
 
