@@ -66,8 +66,8 @@ jobs:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # Copied off inputs.site-branch. A checkout ref whose name contains "branch" is classified
-    # as a pull-request head checkout; this name is only the site repository's publish branch.
+    # inputs.site-branch, for the fetch below. actions/checkout's ref on a reusable workflow is
+    # classified as a pull-request head checkout, so the publish branch is fetched afterwards.
     env:
       PUBLISH_AT: ${{ inputs.site-branch }}
     steps:
@@ -79,7 +79,7 @@ jobs:
         run: |
           set -euo pipefail
           case "$PUBLISH_AT" in
-            *$'\n'*|*$'\r'*|refs/pull/*)
+            -*|*$'\n'*|*$'\r'*|refs/pull/*)
               echo "::error::site-branch must be a branch or tag, not a pull request ref" >&2
               exit 1
               ;;
@@ -87,9 +87,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ inputs.site-repository }}
-          ref: ${{ env.PUBLISH_AT }}
           ssh-key: ${{ secrets.SITE_DEPLOY_KEY }}
           path: site
+      - name: Fetch the publish branch
+        working-directory: site
+        run: |
+          set -euo pipefail
+          git fetch --depth 1 origin "$PUBLISH_AT"
+          git checkout --detach FETCH_HEAD
       - name: Copy docs/site.md into the site repository
         env:
           PROJECT: ${{ github.event.repository.name }}
