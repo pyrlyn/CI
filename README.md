@@ -71,6 +71,12 @@ for what else could move here, [docs/consumers.md](docs/consumers.md) for
 who calls which workflow at which pin, and [docs/github-limits.md](docs/github-limits.md) for
 the GitHub constraints (with sources) that shape this repository.
 
+[docs/plans/](docs/plans/) holds plans for upcoming work (translations in
+[docs/ru/plans/](docs/ru/plans/) and [docs/uk/plans/](docs/uk/plans/)):
+[license-scanning.md](docs/plans/license-scanning.md) (dependency license scanning, paused)
+and [licensing-cla-empryo.md](docs/plans/licensing-cla-empryo.md) (dual licensing, CLA and
+Empryo ideas for rtok/cox).
+
 ## License
 
 [GPL-3.0](LICENSE)
