@@ -392,9 +392,12 @@ jobs:
         name: Use the pinned Rust and add the target
         env:
           RUST_VERSION: ${{ inputs.rust-version }}
-          TEST: ${{ matrix.test }}
+          # toJSON keeps JSON false as the string "false". A bare ${{ matrix.test }} can
+          # arrive empty for boolean false, which would run the tests. A missing key is
+          # null. Quotes are stripped so a JSON string "false" is accepted too.
+          TEST: ${{ toJSON(matrix.test) }}
           LOCKED: ${{ inputs.locked }}
-          CLIPPY_ARGS: ${{ inputs.clippy-args }}
+          CARGO_ARGS: ${{ inputs.clippy-args }}
         run: |
           set -euo pipefail
           if [ -n "$RUST_VERSION" ]; then
@@ -414,9 +417,10 @@ jobs:
           rustc --version | grep -q "^rustc $version " \
             || { echo "rustc is not the pinned Rust $version" >&2; exit 1; }
           host="$(rustc -vV | sed -n 's/^host: //p')"
+          test_flag=${TEST//'"'/}
           if [ "$host" = "$TARGET" ]; then
             echo "TARGET_ARGS=" >> "$GITHUB_ENV"
-            if [ "$TEST" = "false" ]; then native=false; else native=true; fi
+            if [ "$test_flag" = "false" ]; then native=false; else native=true; fi
           else
             echo "TARGET_ARGS=--target $TARGET" >> "$GITHUB_ENV"
             native=false
@@ -436,7 +440,7 @@ jobs:
           echo "LOCKED_ARGS=$locked" >> "$GITHUB_ENV"
           # clippy-args that already pass --locked (the pre-`locked` way) get no second one:
           # cargo rejects a repeated --locked.
-          case " $CLIPPY_ARGS " in
+          case " $CARGO_ARGS " in
             *" --locked "*) echo "CLIPPY_LOCKED_ARGS=" >> "$GITHUB_ENV" ;;
             *) echo "CLIPPY_LOCKED_ARGS=$locked" >> "$GITHUB_ENV" ;;
           esac
@@ -465,22 +469,23 @@ jobs:
       - if: env.RUN == 'true'
         name: clippy
         env:
-          CLIPPY_ARGS: ${{ inputs.clippy-args }}
+          CARGO_ARGS: ${{ inputs.clippy-args }}
           FEATURE_ARGS: ${{ inputs.feature-args }}
         run: |
-          # CLIPPY_ARGS and TARGET_ARGS are split on whitespace on purpose.
+          # CARGO_ARGS and TARGET_ARGS are split on whitespace on purpose.
           # shellcheck disable=SC2086
-          cargo clippy $PACKAGE_ARGS --all-targets $FEATURE_ARGS $TARGET_ARGS $CLIPPY_ARGS \
+          cargo clippy $PACKAGE_ARGS --all-targets $FEATURE_ARGS $TARGET_ARGS $CARGO_ARGS \
             $CLIPPY_LOCKED_ARGS -- -D warnings
 
       - if: env.RUN == 'true'
         name: check
         env:
-          CLIPPY_ARGS: ${{ inputs.clippy-args }}
+          CARGO_ARGS: ${{ inputs.clippy-args }}
           FEATURE_ARGS: ${{ inputs.feature-args }}
         run: |
+          # CARGO_ARGS and TARGET_ARGS are split on whitespace on purpose.
           # shellcheck disable=SC2086
-          cargo check $PACKAGE_ARGS --all-targets $FEATURE_ARGS $TARGET_ARGS $CLIPPY_ARGS \
+          cargo check $PACKAGE_ARGS --all-targets $FEATURE_ARGS $TARGET_ARGS $CARGO_ARGS \
             $CLIPPY_LOCKED_ARGS
 
       - name: test

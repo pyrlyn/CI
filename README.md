@@ -15,6 +15,10 @@ Shared reusable GitHub workflows and build configs for pyrlyn repositories
 | [`pipeline.yml`](.github/workflows/pipeline.yml) | ci-rust + CodeQL + Semgrep + Snyk in parallel behind a `gate` |
 | [`release-plz.yml`](.github/workflows/release-plz.yml) | release PR only (versions + changelog); never tags, releases or dispatches |
 | [`release.yml`](.github/workflows/release.yml) | release build on bump's tag: checks, verify, build, sign, smoke, upload, publish |
+| [`windows-sign.yml`](.github/workflows/windows-sign.yml) | sign a Windows build and pack an MSIX |
+| [`flatpak.yml`](.github/workflows/flatpak.yml) | build a Flatpak bundle from the caller's manifest |
+| [`testflight.yml`](.github/workflows/testflight.yml) | upload an iOS build to TestFlight (not from a pull request) |
+| [`play.yml`](.github/workflows/play.yml) | upload a signed Android App Bundle (not from a pull request) |
 | [`dependabot-automerge.yml`](.github/workflows/dependabot-automerge.yml) | merge allowed Dependabot updates after green CI |
 | [`sonarcloud.yml`](.github/workflows/sonarcloud.yml) | SonarCloud scan, skipped without `SONAR_TOKEN` |
 | [`ci.yml`](.github/workflows/ci.yml) | **single entrypoint**: config-driven (`.github/infra.yml`) Rust CI, scans, SonarCloud, lint and repo-specific jobs behind a `gate` |
@@ -28,6 +32,7 @@ Shared reusable GitHub workflows and build configs for pyrlyn repositories
 | [`warnings-to-issues.yml`](.github/workflows/warnings-to-issues.yml) | one issue per code scanning / SonarCloud warning (deduplicated, closed when fixed); infra's own caller is [`warnings.yml`](.github/workflows/warnings.yml) |
 | [`revert-on-failure.yml`](.github/workflows/revert-on-failure.yml) | revert a failed push to the default branch |
 | [`cla.yml`](.github/workflows/cla.yml) | Contributor License Agreement check (`pyrlyn/cla` action, off unless `CLA_ENABLED`); see [docs/cla.md](docs/cla.md) |
+| [`renovate.yml`](.github/workflows/renovate.yml) | self-hosted Renovate for the pyrlyn organization, mise only (`mise.toml`, `mise.lock`); config in [`renovate/`](renovate/); see [docs/renovate.md](docs/renovate.md) |
 
 Composite actions: [`gate`](.github/actions/gate/action.yml) (fail unless every needed job
 succeeded), [`revert-on-failure`](.github/actions/revert-on-failure/action.yml),

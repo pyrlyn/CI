@@ -1,13 +1,16 @@
 name: lint
 
 # Lints GitHub Actions workflows with actionlint (shellcheck runs inside it; the runner image
-# ships shellcheck). Runs on this repository's own pull requests, and is reusable
-# (`workflow_call`) so any repository can lint its workflows the same way.
+# ships shellcheck). Runs on this repository's own pull requests and on every push to main
+# (a merge or a direct commit), and is reusable (`workflow_call`) so any repository can lint
+# its workflows the same way. Callers pin a SHA; `push` here does not change `workflow_call`.
 #
 # Caller job permissions: contents: read, actions: write (cancel-run).
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
   workflow_dispatch:
   workflow_call:
     inputs:
@@ -51,9 +54,9 @@ on:
         required: false
         default: ""
 
-# Run directly (this repository's pull_request / workflow_dispatch): only the newest run per
-# ref executes, a new push cancels the older run, except on the default branch (a merge into
-# main), where each run gets a group of its own. Called (workflow_call): the github context,
+# Run directly (this repository's pull_request / push / workflow_dispatch): only the newest
+# run per ref executes, a new push cancels the older run, except on the default branch (a
+# merge into main), where each run gets a group of its own. Called (workflow_call): the github context,
 # github.workflow and github.workflow_ref included, is the caller's, so a shared group would
 # let a newer caller run cancel this job inside an older caller run, e.g. two pushes to a
 # consumer's main: the older run's gate then fails on a cancelled lint and revert-on-failure

@@ -24,7 +24,9 @@ on:
         required: false
         default: true
       canonical-ref:
-        description: Ref of pyrlyn/ci to read licenses/ and tools/license-kit from.
+        description: >-
+          Ref of pyrlyn/ci to read licenses/ and tools/license-kit from: a branch, tag, or
+          commit, not a pull request ref (refs/pull/...).
         type: string
         required: false
         default: main
@@ -67,20 +69,38 @@ jobs:
     name: license-check
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # inputs.canonical-ref, for the fetch below. actions/checkout's ref on a reusable workflow
+    # is classified as a pull-request head checkout, so the canonical commit is fetched afterwards.
+    env:
+      CANONICAL: ${{ inputs.canonical-ref || 'main' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: repo
           persist-credentials: false
+      - name: Check the canonical ref
+        run: |
+          set -euo pipefail
+          case "$CANONICAL" in
+            -*|*$'\n'*|*$'\r'*|refs/pull/*)
+              echo "::error::canonical-ref must be a branch, tag, or commit, not a pull request ref" >&2
+              exit 1
+              ;;
+          esac
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: pyrlyn/ci
-          ref: ${{ inputs.canonical-ref || 'main' }}
           path: infra
           persist-credentials: false
           sparse-checkout: |
             licenses
             tools/license-kit
+      - name: Fetch the canonical ref
+        working-directory: infra
+        run: |
+          set -euo pipefail
+          git fetch --depth 1 origin "$CANONICAL"
+          git checkout --detach FETCH_HEAD
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: infra/tools/license-kit -> target
