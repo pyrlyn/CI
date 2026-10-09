@@ -86,7 +86,9 @@ Pin callers to a full 40-character commit SHA (`@<sha>`, with a `# vX.Y.Z` comme
 exist) so changes here do not reach callers unannounced.
 
 `self-test.yml` runs `ci-rust.yml` against `tests/fixtures/rust-crate` on every pull
-request, with the shared matrix and through the `rust-version` path.
+request, with the shared matrix, through the `rust-version` path, and through a one-entry
+custom matrix (`"test": false`) that overrides `tools`, `setup-command`, `test-command`,
+`build-command`, `clippy-args`, and `cache-all-refs`.
 
 ## Secrets
 
