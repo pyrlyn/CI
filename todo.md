@@ -1,4 +1,4 @@
 - T1. Sync the local checkout with origin/main
 - T2. Run actionlint on pushes to main (done: `lint.yml` triggers on `push` to `main`)
-- T3. Extend self-test coverage to the custom inputs
-- T4. Rename the misleading CLIPPY_ARGS env in the check step
+- T3. Extend self-test coverage to the custom inputs (done: `self-test.yml` job `custom`)
+- T4. Rename the misleading CLIPPY_ARGS env in the check step (done: `CARGO_ARGS` in clippy and check)
