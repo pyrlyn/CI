@@ -24,7 +24,9 @@ on:
         required: false
         default: true
       canonical-ref:
-        description: Ref of pyrlyn/ci to read licenses/ and tools/license-kit from.
+        description: >-
+          Ref of pyrlyn/ci to read licenses/ and tools/license-kit from: a branch, tag, or
+          commit, not a pull request ref (refs/pull/...).
         type: string
         required: false
         default: main
@@ -67,15 +69,28 @@ jobs:
     name: license-check
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # Copied off inputs.canonical-ref. A checkout ref whose name contains "ref" is classified
+    # as a pull-request head checkout; this name is only pyrlyn/ci's canonical license ref.
+    env:
+      CANONICAL: ${{ inputs.canonical-ref || 'main' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: repo
           persist-credentials: false
+      - name: Check the canonical ref
+        run: |
+          set -euo pipefail
+          case "$CANONICAL" in
+            *$'\n'*|*$'\r'*|refs/pull/*)
+              echo "::error::canonical-ref must be a branch, tag, or commit, not a pull request ref" >&2
+              exit 1
+              ;;
+          esac
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: pyrlyn/ci
-          ref: ${{ inputs.canonical-ref || 'main' }}
+          ref: ${{ env.CANONICAL }}
           path: infra
           persist-credentials: false
           sparse-checkout: |

@@ -32,7 +32,9 @@ on:
         required: false
         default: pyrlyn/landing
       site-branch:
-        description: Branch of the site repository to push to.
+        description: >-
+          Branch of the site repository to push to. A branch or tag name, not a pull request
+          ref (refs/pull/...).
         type: string
         required: false
         default: main
@@ -64,15 +66,28 @@ jobs:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # Copied off inputs.site-branch. A checkout ref whose name contains "branch" is classified
+    # as a pull-request head checkout; this name is only the site repository's publish branch.
+    env:
+      PUBLISH_AT: ${{ inputs.site-branch }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: source
           persist-credentials: false
+      - name: Check the site branch
+        run: |
+          set -euo pipefail
+          case "$PUBLISH_AT" in
+            *$'\n'*|*$'\r'*|refs/pull/*)
+              echo "::error::site-branch must be a branch or tag, not a pull request ref" >&2
+              exit 1
+              ;;
+          esac
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ inputs.site-repository }}
-          ref: ${{ inputs.site-branch }}
+          ref: ${{ env.PUBLISH_AT }}
           ssh-key: ${{ secrets.SITE_DEPLOY_KEY }}
           path: site
       - name: Copy docs/site.md into the site repository
