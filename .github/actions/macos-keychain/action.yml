@@ -1,0 +1,84 @@
+name: macos-keychain
+description: >-
+  Import a Developer ID Application certificate into a keychain of its own, created for this
+  job, and leave it there for the job's later steps (build scripts, xcodebuild, codesign,
+  hdiutil) to sign with. Exports the identity's SHA-1 under `identity-env` and the keychain
+  path as SIGNING_KEYCHAIN. Unlike macos-sign (which signs given paths and deletes its keychain
+  in the same step), the caller deletes this keychain itself:
+  `security delete-keychain "$SIGNING_KEYCHAIN"` under `if: always() && env.SIGNING_KEYCHAIN != ''`.
+  The one signing setup of build-cli.yml and build-macos-dmg.yml. A no-op on non-macOS runners.
+inputs:
+  certificate:
+    description: Base64 Developer ID Application .p12 (secret MACOS_CERTIFICATE).
+    required: false
+    default: ""
+  password:
+    description: Password of the .p12 (secret MACOS_CERTIFICATE_PWD).
+    required: false
+    default: ""
+  required:
+    description: >-
+      'true' fails the job when either secret is empty (a release must be signed); 'false'
+      warns and leaves `signed` false so the caller signs ad-hoc or not at all.
+    required: false
+    default: "true"
+  identity-env:
+    description: Environment variable the identity's SHA-1 is exported to.
+    required: false
+    default: MACOS_SIGN_IDENTITY
+outputs:
+  signed:
+    description: "'true' when an identity was imported."
+    value: ${{ steps.import.outputs.signed }}
+  identity:
+    description: The identity's SHA-1, empty when not signed.
+    value: ${{ steps.import.outputs.identity }}
+runs:
+  using: composite
+  steps:
+    - id: import
+      shell: bash
+      env:
+        CERTIFICATE: ${{ inputs.certificate }}
+        PASSWORD: ${{ inputs.password }}
+        REQUIRED: ${{ inputs.required }}
+        IDENTITY_ENV: ${{ inputs.identity-env }}
+      run: |
+        set -euo pipefail
+        if [ "$RUNNER_OS" != macOS ]; then
+          echo "signed=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        [[ "$IDENTITY_ENV" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { echo "bad identity-env: $IDENTITY_ENV" >&2; exit 1; }
+        if [ -z "$CERTIFICATE" ] || [ -z "$PASSWORD" ]; then
+          msg="MACOS_CERTIFICATE and MACOS_CERTIFICATE_PWD must both be set: a base64 Developer ID Application .p12 and its password."
+          if [ "$REQUIRED" = true ]; then
+            echo "$msg" >&2
+            exit 1
+          fi
+          echo "::warning::$msg Not signing with a Developer ID."
+          echo "signed=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        keychain="$RUNNER_TEMP/signing.keychain-db"
+        keychain_pwd="$(openssl rand -hex 16)"
+        cert="$RUNNER_TEMP/certificate.p12"
+        trap 'rm -f "$cert"' EXIT
+        echo "$CERTIFICATE" | base64 --decode > "$cert"
+        security create-keychain -p "$keychain_pwd" "$keychain"
+        echo "SIGNING_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+        security set-keychain-settings -lut 21600 "$keychain"
+        security unlock-keychain -p "$keychain_pwd" "$keychain"
+        security import "$cert" -P "$PASSWORD" -f pkcs12 -k "$keychain" -T /usr/bin/codesign
+        # Without this, codesign would prompt for the key and hang the job.
+        security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_pwd" "$keychain" >/dev/null
+        security list-keychains -d user -s "$keychain" login.keychain-db
+        identity="$(security find-identity -v -p codesigning "$keychain" \
+          | sed -nE 's/^ *[0-9]+\) ([0-9A-F]{40}) "Developer ID Application:.*/\1/p')"
+        if [ "$(printf '%s\n' "$identity" | grep -c .)" -ne 1 ]; then
+          echo "expected exactly one Developer ID Application identity, found:" >&2
+          security find-identity -v -p codesigning "$keychain" >&2
+          exit 1
+        fi
+        echo "$IDENTITY_ENV=$identity" >> "$GITHUB_ENV"
+        { echo "signed=true"; echo "identity=$identity"; } >> "$GITHUB_OUTPUT"

@@ -1,0 +1,131 @@
+name: publish-release
+
+# Reusable publish step of a release: downloads the artifacts the build workflows uploaded
+# (build-cli.yml, build-macos-dmg.yml, or any other), writes checksums, uploads everything to
+# the GitHub release of `tag` and publishes it. One release for the CLI and the desktop app.
+#
+# Normal tags (bump.yml's vX.Y.Z): bump already created the draft with the changelog notes;
+# this fills and publishes it, and GitHub's usual latest rules apply. A missing draft fails the
+# run (bump makes it). Test tags (matching `test-tag-regex`, default `-test.N`): there is no
+# bump for them (no version or changelog commit), so this creates the release itself, publishes
+# it as a prerelease with `--latest=false`, and fails if /releases/latest moved to it. The
+# caller skips its other publish side effects (package managers, taps) when `test` is true.
+#
+# The caller checks out nothing: this job checks out `tag` itself. Caller job permissions:
+# contents: write.
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag (vX.Y.Z from bump.yml, or a test tag).
+        type: string
+        required: true
+      test-tag-regex:
+        description: Bash regex (=~) that marks a test tag.
+        type: string
+        required: false
+        default: '-test\.[0-9]+$'
+      artifact-pattern:
+        description: actions/download-artifact pattern of the artifacts to publish.
+        type: string
+        required: false
+        default: "*"
+      files:
+        description: Space-separated globs, matched in the downloaded artifacts, of the files to upload.
+        type: string
+        required: false
+        default: "*.tar.xz *.tar.gz *.zip *.dmg"
+      checksums:
+        description: Upload SHA256SUMS and a <file>.sha256 next to every file.
+        type: boolean
+        required: false
+        default: true
+      test-notes:
+        description: Notes of a test release. `{tag}` and `{sha}` are replaced.
+        type: string
+        required: false
+        default: "Test build of {sha}, not a release: published as a prerelease that is never /releases/latest."
+    outputs:
+      test:
+        description: "'true' when `tag` is a test tag."
+        value: ${{ jobs.publish.outputs.test }}
+permissions:
+  contents: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      test: ${{ steps.kind.outputs.test }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+      - name: Test or normal tag
+        id: kind
+        env:
+          TEST_RE: ${{ inputs.test-tag-regex }}
+        run: |
+          if [[ "$TAG" =~ $TEST_RE ]]; then echo "test=true"; else echo "test=false"; fi >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: ${{ inputs.artifact-pattern }}
+          path: staging
+      - name: Collect assets and checksums
+        env:
+          FILES: ${{ inputs.files }}
+          CHECKSUMS: ${{ inputs.checksums }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for pattern in $FILES; do
+            find staging -type f -name "$pattern" -exec mv {} dist/ \;
+          done
+          cd dist
+          shopt -s nullglob
+          files=(*)
+          [ ${#files[@]} -gt 0 ] || { echo "no $FILES in the artifacts" >&2; find ../staging >&2; exit 1; }
+          if [ "$CHECKSUMS" = true ]; then
+            # One aggregate file, sorted so it is reproducible, and a sidecar per file.
+            printf '%s\n' "${files[@]}" | sort | xargs shasum -a 256 > SHA256SUMS
+            for f in "${files[@]}"; do shasum -a 256 "$f" > "$f.sha256"; done
+          fi
+          ls -l
+      - name: Publish release
+        env:
+          TEST: ${{ steps.kind.outputs.test }}
+          TEST_NOTES: ${{ inputs.test-notes }}
+        run: |
+          set -euo pipefail
+          if [ "$TEST" = true ]; then
+            if ! gh release view "$TAG" >/dev/null 2>&1; then
+              sha="$(git rev-parse --short HEAD)"
+              notes="${TEST_NOTES//\{tag\}/$TAG}"
+              notes="${notes//\{sha\}/$sha}"
+              gh release create "$TAG" --verify-tag --draft --prerelease --latest=false \
+                --title "$TAG (test build)" --notes "$notes"
+            fi
+          elif ! gh release view "$TAG" >/dev/null 2>&1; then
+            echo "no release for $TAG: bump.yml creates its draft" >&2
+            exit 1
+          fi
+          gh release upload "$TAG" dist/* --clobber
+          if [ "$TEST" = true ]; then
+            gh release edit "$TAG" --draft=false --prerelease --latest=false
+            latest="$(gh api "repos/$GH_REPO/releases/latest" --jq .tag_name 2>/dev/null || true)"
+            if [ "$latest" = "$TAG" ]; then
+              echo "test release $TAG became /releases/latest" >&2
+              exit 1
+            fi
+          else
+            gh release edit "$TAG" --draft=false
+          fi
+          gh release view "$TAG" --json tagName,isDraft,isPrerelease,assets \
+            --jq '"published \(.tagName) draft=\(.isDraft) prerelease=\(.isPrerelease) assets=\(.assets | length)"' \
+            | tee -a "$GITHUB_STEP_SUMMARY"

@@ -18,6 +18,9 @@ repository. All third-party actions are pinned to full commit SHAs.
 | `release-plz.yml` | release PR only; never tags, releases or dispatches (bump does) |
 | `release.yml` | release build on bump's tag: checks, verify, build, sign/notarize, smoke, upload, publish |
 | `release-apple-desktop.yml` | macOS app release: signed, notarised `.dmg`, Sparkle appcast, GitHub Release (production only) |
+| `build-cli.yml` | release building block: CLI archives per {os, target}, macOS signed via `macos-keychain`, smoke test, artifacts |
+| `build-macos-dmg.yml` | release building block: macOS `.app` in a checked, Developer ID-signed (not notarised) `.dmg` artifact |
+| `publish-release.yml` | release building block: one GitHub release from all artifacts; `-test.N` tags become prereleases, never latest |
 | `windows-sign.yml` | sign a Windows build and pack one MSIX (production only) |
 | `flatpak.yml` | build one Flatpak bundle from the caller's manifest |
 | `testflight.yml` | upload an iOS IPA to TestFlight; a pull request does not upload |
@@ -43,6 +46,9 @@ Secrets (declared in each workflow's `on.workflow_call.secrets`):
   `APPSTORE_CONNECT_KEY`, `APPSTORE_CONNECT_KEY_ID`, `APPSTORE_CONNECT_ISSUER_ID` (or `APPLE_ID`,
   `APPLE_TEAM_ID`, `APPLE_APP_PASSWORD`), `SPARKLE_ED_PRIVATE_KEY` (with `sparkle`); organization
   secrets, passed with `secrets: inherit`; a missing one stops the run before the build.
+- `build-cli.yml`, `build-macos-dmg.yml`: `MACOS_CERTIFICATE`, `MACOS_CERTIFICATE_PWD` (required
+  unless `require-signing: false`).
+- `publish-release.yml`: none (uses `github.token`).
 - `windows-sign.yml`: `WINDOWS_CERTIFICATE`, `WINDOWS_CERTIFICATE_PWD`; a missing one stops the run
   before the layout is packed.
 - `flatpak.yml`: none.
@@ -67,6 +73,8 @@ Secrets (declared in each workflow's `on.workflow_call.secrets`):
 - `release.yml`: `contents: write` (Release assets), `checks: read`, `actions: write`,
   `issues: write`.
 - `release-apple-desktop.yml`: `contents: write`, `actions: read`, `issues: write`.
+- `build-cli.yml`, `build-macos-dmg.yml`: `contents: read`.
+- `publish-release.yml`: `contents: write`.
 - `windows-sign.yml`: `contents: read`, `actions: write`.
 - `flatpak.yml`: `contents: read`, `actions: write`.
 - `testflight.yml`: `contents: read`, `actions: write`.
@@ -103,6 +111,7 @@ Composite actions (reference them as `pyrlyn/ci/.github/actions/<name>@<sha>`):
 | `gate` | fail unless every job in a `needs` JSON succeeded (`skip-ok` lists allowed skips) |
 | `revert-on-failure` | revert a failed push, push the revert, open a draft re-apply PR |
 | `macos-sign` | Developer ID codesign (or identity discovery for cargo-dist) + notarization |
+| `macos-keychain` | import the Developer ID identity into a job keychain kept for later steps (the release builds' one signing setup) |
 | `setup-xcode` | select the pinned Xcode (default 27) with `xcode-select`; fails when it is missing |
 | `cancel-run` | cancel the current workflow run (last step, `if: failure()`); `actions: write` |
 | `setup-rust` | Rust from the caller's mise.toml as the active toolchain; fails on any other rustc |
@@ -890,6 +899,105 @@ Notarisation uses the App Store Connect API key, or the Apple ID trio when no ke
 
 A single job, so it does not end with `cancel-run`; `notify-failure` opens the
 `release-failure` issue as in release.yml (not for a dry run).
+
+## Release orchestration: build-cli.yml + build-macos-dmg.yml + publish-release.yml
+
+Three building blocks for a repository that ships a CLI and a macOS app from one tag, into one
+GitHub release, with one signing setup (`macos-keychain`, the Developer ID organization
+certificate). The caller keeps one release workflow with one trigger: bump.yml dispatches it on
+its tag, exactly as for `release.yml`. That workflow checks that the run is on the tag,
+runs its own verify gate, calls the two builds and then publishes:
+
+```yaml
+name: release
+on:
+  workflow_dispatch:
+    inputs:
+      tag: { description: "vX.Y.Z (bump.yml) or vX.Y.Z-test.N; run with --ref <tag>", required: true, type: string }
+permissions:
+  contents: read
+jobs:
+  version:   # repository-specific: the tag names this commit and matches the manifest version
+    runs-on: ubuntu-latest
+    outputs: { ref: "${{ steps.v.outputs.ref }}" }
+    steps: [ ... ]
+  cli:
+    needs: version
+    uses: pyrlyn/ci/.github/workflows/build-cli.yml@<sha>
+    with:
+      ref: ${{ needs.version.outputs.ref }}
+      matrix: >-
+        [{"os": "xcode-27", "target": "aarch64-apple-darwin", "sign": true},
+         {"os": "ubuntu-latest", "target": "x86_64-unknown-linux-gnu", "sign": false}]
+      # Signs the macOS binary with "$MACOS_SIGN_IDENTITY" when it is set.
+      package-command: scripts/package.sh "$TARGET" "$OUT_DIR"
+      smoke-command: tar -xJf "$OUT_DIR/app-$TARGET.tar.xz" -C "$RUNNER_TEMP" && "$RUNNER_TEMP/app" --version
+    secrets:
+      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+      MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+  desktop:
+    needs: version
+    uses: pyrlyn/ci/.github/workflows/build-macos-dmg.yml@<sha>
+    with:
+      ref: ${{ needs.version.outputs.ref }}
+      setup-command: bash scripts/desktop/xcframework.sh
+      # Builds App.app, signs it with "$MACOS_SIGN_IDENTITY", packs the DMG, prints its path last.
+      build-command: bash scripts/desktop/app.sh CURRENT_PROJECT_VERSION="$BUILD_NUMBER" && bash scripts/desktop/dmg.sh
+      app-name: App
+    secrets:
+      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+      MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+  publish:
+    needs: [version, cli, desktop]
+    uses: pyrlyn/ci/.github/workflows/publish-release.yml@<sha>
+    permissions:
+      contents: write
+    with:
+      tag: ${{ inputs.tag }}
+  tap:       # package managers, taps, announcements: skip them for test releases
+    needs: publish
+    if: needs.publish.outputs.test != 'true'
+    ...
+```
+
+- **build-cli.yml**: `matrix` (JSON list of `{os, target, sign}`), `package-command` (required;
+  runs with `TARGET`, `OUT_DIR` and, on signed macOS entries, the identity in `identity-env`
+  (default `MACOS_SIGN_IDENTITY`) plus `SIGNING_KEYCHAIN`), `smoke-command`, `setup-command`,
+  `ref`, `xcode-version` (`27`), `mise-install-args` (`rust`), `rust-cache` (true), `out-dir`
+  (`dist`), `artifact-files` (`*.tar.xz *.tar.gz *.zip`), `artifact-prefix` (`cli-`),
+  `require-signing` (true). Artifacts: `<artifact-prefix><target>`.
+- **build-macos-dmg.yml**: `build-command` (required; builds and signs the app, makes the DMG,
+  prints its path as the last stdout line; gets `BUILD_NUMBER` = run number), `app-name`
+  (required), `setup-command`, `ref`, `runs-on` (`xcode-27`), `xcode-version` (`27`),
+  `timeout-minutes` (90), `mise-install-args`, `archs` (`arm64`), `require-applications-link`
+  (true), `artifact-name` (`macos-dmg`), `require-signing` (true), `identity-env`. Before the
+  upload it mounts the DMG and requires `<app-name>.app`, the executable its Info.plist names,
+  every arch in `archs`, the /Applications link and a valid (Developer ID) signature. Debug or
+  Release is the build-command's choice; there is no notarisation (production app releases with
+  notarisation and Sparkle are release-apple-desktop.yml).
+- **publish-release.yml**: `tag` (required), `test-tag-regex` (`-test\.[0-9]+$`),
+  `artifact-pattern` (`*`), `files` (`*.tar.xz *.tar.gz *.zip *.dmg`), `checksums` (true:
+  `SHA256SUMS` plus a `.sha256` per file), `test-notes`. Output `test`. A normal tag fills and
+  publishes bump's draft (missing draft = failure). A test tag gets its release created here:
+  published with `--prerelease --latest=false`, and the run fails if `/releases/latest` moved to
+  it, so installers and `self update` that read /releases/latest stay on the last real release.
+  A test release needs no bump: tag the commit by hand (`git tag -a vX.Y.Z-test.N`, pushed) and
+  dispatch the release workflow with `--ref vX.Y.Z-test.N -f tag=vX.Y.Z-test.N`.
+
+### Dependabot callers of a ci.yml that uses ci-rust.yml
+
+A repository's `dependabot.yml` that runs its own `ci.yml` (`uses: ./.github/workflows/ci.yml`)
+must grant that calling job everything ci.yml's jobs ask for. ci-rust.yml cancels the run on a
+failed job and so asks for `actions: write`; without it on the calling job GitHub rejects the
+whole Dependabot run as `startup_failure` (on every pull request, Dependabot's or not):
+
+```yaml
+  ci:
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: write   # whatever ci.yml's other jobs need
+      actions: write    # ci-rust.yml (cancel-run-on-failure)
+```
 
 ## windows-sign.yml
 
