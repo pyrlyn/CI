@@ -15,6 +15,7 @@ repository. All third-party actions are pinned to full commit SHAs.
 | `snyk.yml` | Snyk Open Source; off by default (switch), skipped without a token |
 | `pipeline.yml` | ci-rust + CodeQL + Semgrep + Snyk in parallel behind a `gate` |
 | `bump.yml` | the only release path: version commit, PR, required checks, rebase merge, tag + Release, release build |
+| `release-guard.yml` | after a release-PR merge on the default branch: tag + regular Release always exist (idempotent); if the release did not come out, opens a revert PR (never merges it) |
 | `release-plz.yml` | release PR only; never tags, releases or dispatches (bump does) |
 | `release.yml` | release build on bump's tag: checks, verify, build, sign/notarize, smoke, upload, publish |
 | `release-apple-desktop.yml` | macOS app release: signed, notarised `.dmg`, Sparkle appcast, GitHub Release (production only) |
@@ -779,6 +780,52 @@ jobs:
       release-script: tools/release.sh
       ci-workflows: |
         pipeline.yml
+    secrets:
+      BUMP_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+```
+
+## release-guard.yml
+
+Safety net behind bump.yml; opt-in, backward compatible (bump.yml is unchanged). A merged
+release PR must always end as a tag, a published regular Release and a green release build. bump
+does it when it merges the PR itself; it cannot when the PR is merged by hand or by auto-merge
+(e.g. a `dry-run` PR that someone enabled auto-merge on), or when the run dies after the merge.
+The caller runs release-guard on `push` to the default branch. It acts only when the pushed
+commit is a release-PR merge (merged PR head branch starts with `branch-prefix`, or subject
+`release: vX.Y.Z`); reverts are ignored.
+
+1. Waits `grace-minutes` (15) for bump's own tag.
+2. `ensure-release` (true): no tag -> creates it on the pushed commit; no Release -> creates it
+   (draft, notes from CHANGELOG.md or generated; a prerelease only for a `-` version or
+   `prerelease: true`); dispatches `release-workflows` with `--ref <tag> -f tag=<tag>` unless a
+   run for the tag is already queued, running or green. Everything is reused if it exists, so
+   a re-run is a no-op.
+3. Waits (`release-timeout-minutes`, 90) for the release workflows on the tag and checks that
+   the Release is published (not a draft) with the expected prerelease flag.
+4. If not (failed, cancelled, never ran, timed out, no Release) and `revert` (true): pushes
+   `revert/release-<tag>` (`git revert`, `-m 1` for a true merge commit) and opens a PR with
+   `BUMP_TOKEN` (the run link and reason in the body). It never merges, never enables
+   auto-merge and never pushes to the default branch. Loop guards: not for a revert commit or a
+   `revert/` branch, once per tag (any earlier revert branch or PR, in any state, wins), not
+   when the Release is published. The tag and draft Release stay: delete them by hand before
+   releasing the version again. The run itself ends red.
+
+```yaml
+name: release-guard
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  guard:
+    uses: pyrlyn/ci/.github/workflows/release-guard.yml@<sha> # main
+    permissions:
+      contents: write
+      actions: write
+      pull-requests: write
+    with:
+      prerelease: false
     secrets:
       BUMP_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
 ```
