@@ -72,6 +72,11 @@ jobs:
 | `test-command` | `cargo test --all-targets --all-features` | Bash that runs the tests on native entries. Empty skips them. |
 | `build-command` | `cargo build --all-targets --all-features --target "$TARGET"` | Bash that builds a cross target. |
 | `cache-all-refs` | `false` | Save the Cargo cache on every ref. By default only the default branch saves; set this when CI runs only on pull requests. |
+| `nextest-archive` | `false` | Build `cargo nextest archive` once per matrix entry (same OS and target as the run), upload it as artifact `nextest-archive-<target>` and export its path as `NEXTEST_ARCHIVE`. Needs `tools: nextest`. Entries that only build (cross targets, `"test": false`) skip it. |
+| `nextest-archive-args` | `""` | Arguments of `cargo nextest archive`; empty uses `$PACKAGE_ARGS --all-targets $FEATURE_ARGS $LOCKED_ARGS`. |
+| `sccache` | `false` | Use sccache with Cloudflare R2 (see below). |
+| `sccache-bucket` | `""` | R2 bucket; empty uses the caller's variable `SCCACHE_BUCKET`. |
+| `sccache-endpoint` | `""` | `https://<ACCOUNT_ID>.r2.cloudflarestorage.com`; empty uses the caller's variable `SCCACHE_ENDPOINT`. |
 
 The caller's `mise.toml` should pin Rust, for example:
 
@@ -90,9 +95,34 @@ request, with the shared matrix, through the `rust-version` path, and through a 
 custom matrix (`"test": false`) that overrides `tools`, `setup-command`, `test-command`,
 `build-command`, `clippy-args`, and `cache-all-refs`.
 
+## nextest archive
+
+With `nextest-archive: true` and `tools: nextest`, each matrix entry that runs tests builds the
+archive after clippy and check and exposes it as `NEXTEST_ARCHIVE`. The existing check names do
+not change. The caller's `test-command` decides whether to use it; to run from the archive:
+
+```yaml
+    with:
+      tools: nextest
+      nextest-archive: true
+      test-command: cargo nextest run --archive-file "$NEXTEST_ARCHIVE" --workspace-remap .
+```
+
+The archive holds one feature set (`nextest-archive-args`, default `--all-targets` with
+`feature-args`). Filter with `-E 'package(name)'` instead of a second build.
+
+## sccache with R2
+
+`sccache: true` installs sccache (`mozilla-actions/sccache-action`) and sets `RUSTC_WRAPPER`,
+`CARGO_INCREMENTAL=0`, `SCCACHE_REGION=auto` and the R2 settings. Pull requests only read the
+cache (`SCCACHE_S3_RW_MODE=READ_ONLY`). It needs the secrets `R2_ACCESS_KEY_ID` and
+`R2_SECRET_ACCESS_KEY` (pass them with `secrets: inherit`, or explicitly) and the variables
+`SCCACHE_BUCKET` and `SCCACHE_ENDPOINT`. If any is missing the step clears `RUSTC_WRAPPER`
+(also one set by the caller's `mise.toml`), prints a notice and the build runs without sccache.
+
 ## Secrets
 
-`ci-rust.yml` needs no secrets. A reusable workflow does not see the caller's secrets unless
+`ci-rust.yml` needs no secrets; `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` are optional (`sccache`). A reusable workflow does not see the caller's secrets unless
 they are passed explicitly or with `secrets: inherit`:
 
 ```yaml

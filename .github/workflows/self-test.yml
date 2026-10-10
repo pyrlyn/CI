@@ -108,6 +108,27 @@ jobs:
         cargo nextest --version
         cargo build $PACKAGE_ARGS --all-targets $FEATURE_ARGS $LOCKED_ARGS --target "$TARGET"
 
+  # nextest-archive: the archive is built, uploaded and the tests run from it (not a plain
+  # `cargo nextest run`). sccache: true without R2 secrets must be a no-op that passes.
+  nextest-archive:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    name: nextest-archive
+    uses: ./.github/workflows/ci-rust.yml
+    permissions:
+      contents: read
+      actions: write # cancel-run on failure
+    with:
+      rust-version: "1.98.1"
+      working-directory: tests/fixtures/rust-crate
+      matrix: '[{"os": "ubuntu-latest", "target": "x86_64-unknown-linux-gnu"}]'
+      tools: nextest
+      nextest-archive: true
+      sccache: true
+      test-command: |
+        test -f "$NEXTEST_ARCHIVE"
+        test -z "${RUSTC_WRAPPER:-}"
+        cargo nextest run --archive-file "$NEXTEST_ARCHIVE" --workspace-remap .
+
   # `skip` over the shared four-target matrix: every target still reports under its name,
   # and all of them run their no-op steps on `skip-runs-on` (ubuntu-latest), so no macOS
   # (xcode-27), Windows or ARM runner is started.
