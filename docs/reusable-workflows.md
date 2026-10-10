@@ -52,8 +52,9 @@ Secrets (declared in each workflow's `on.workflow_call.secrets`):
 - `windows-sign.yml`: `WINDOWS_CERTIFICATE`, `WINDOWS_CERTIFICATE_PWD`; a missing one stops the run
   before the layout is packed.
 - `flatpak.yml`: none.
-- `testflight.yml`: `MACOS_CERTIFICATE`, `MACOS_CERTIFICATE_PWD` (macos-sign), `APPSTORE_CONNECT_KEY`,
-  `APPSTORE_CONNECT_KEY_ID`, `APPSTORE_CONNECT_ISSUER_ID`. A pull request does not upload.
+- `testflight.yml`: `MACOS_CERTIFICATE`, `MACOS_CERTIFICATE_PWD` (macos-sign; not with
+  `developer-id: false`), `APPSTORE_CONNECT_KEY`, `APPSTORE_CONNECT_KEY_ID`,
+  `APPSTORE_CONNECT_ISSUER_ID`. A pull request does not upload.
 - `play.yml`: `PLAY_SERVICE_ACCOUNT_JSON`. A pull request does not upload.
 - `sonarcloud.yml`: `SONAR_TOKEN` (optional; every step skips without it).
 - `dependabot-automerge.yml`: none (uses `github.token`).
@@ -1126,11 +1127,16 @@ jobs:
 | `build-command` | `""` |
 | `runs-on` | `macos-26` |
 | `xcode-version` | `""` (image default; otherwise `setup-xcode`) |
+| `setup-mise` | `false` (`true` installs the caller's `mise.toml` tools before the build) |
+| `developer-id` | `true` (`false` skips the Developer ID check, which TestFlight does not use) |
 | `timeout-minutes` | `90` |
 | `cancel-run-on-failure` | `true` |
 
-The `.p8` is written to `~/private_keys` for `altool` and removed when the step ends. The key
-bytes are not printed.
+On a run that may upload, the `.p8` is written to `~/private_keys/AuthKey_<id>.p8` before
+`build-command`, which also gets `APPSTORE_CONNECT_KEY_ID` and `APPSTORE_CONNECT_ISSUER_ID`, so
+an `xcodebuild -exportArchive` with `-authenticationKeyPath` can sign through App Store Connect.
+`altool` reads the same file. A pull request build gets neither. The file is removed when the job
+ends, even after a failure. The key bytes are not printed.
 
 ## play.yml
 
