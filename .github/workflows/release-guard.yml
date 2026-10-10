@@ -1,0 +1,325 @@
+name: release-guard
+
+# Keeps the default branch and the GitHub Releases list consistent. The caller runs it on
+# `push` to the default branch (see docs/reusable-workflows.md#release-guardyml). It acts only
+# when the pushed head commit is a release-PR merge (the merged PR's head branch starts with
+# `branch-prefix`, or the subject is `release: vX.Y.Z`):
+#
+#   wait     bump normally tags the merged commit itself; wait `grace-minutes` for the tag.
+#   ensure   still no tag or Release (the PR was merged by hand, by auto-merge, or bump died
+#            after the merge): create the tag on the pushed commit, a draft Release (regular,
+#            never a prerelease unless `prerelease` or a `-` version) and dispatch
+#            `release-workflows` on the tag. An existing tag, Release or run is reused, so a
+#            re-run is a no-op. A tag or Release made with GITHUB_TOKEN triggers nothing, hence
+#            the explicit `gh workflow run` (workflow_dispatch is exempt from that rule).
+#   verify   wait for the release workflows on the tag; the Release must end up published
+#            (not a draft) and a prerelease only when intended.
+#   revert   not verified (failed, cancelled, skipped, timed out, no Release): open a NEW pull
+#            request `revert/release-<tag>` that reverts the merge commit. Only opens it:
+#            nothing is merged, nothing is pushed to the default branch, no auto-merge. Once
+#            per tag, never for a revert, never when the Release is published.
+#
+# Tokens: GITHUB_TOKEN tags, releases and dispatches. `BUMP_TOKEN` (the existing
+# RELEASE_PLZ_TOKEN: contents + pull requests write) pushes the revert branch and opens the PR
+# ("Allow GitHub Actions to create and approve pull requests" is off in pyrlyn). Without it the
+# revert branch is still pushed with GITHUB_TOKEN and the run fails with a compare link.
+#
+# Caller job permissions: contents: write, actions: write, pull-requests: write.
+on:
+  workflow_call:
+    inputs:
+      tag-prefix:
+        description: Tag prefix before the version.
+        type: string
+        required: false
+        default: v
+      branch-prefix:
+        description: Head branch prefix that marks a release PR (bump.yml uses release/bump-).
+        type: string
+        required: false
+        default: release/bump-
+      release-workflows:
+        description: >-
+          Newline-separated workflow files (each with `workflow_dispatch` and a `tag` input)
+          that build and publish the Release; dispatched with `--ref <tag> -f tag=<tag>`.
+        type: string
+        required: false
+        default: release.yml
+      ensure-release:
+        description: >-
+          Create the missing tag, draft Release and release build. False only verifies (and
+          reverts).
+        type: boolean
+        required: false
+        default: true
+      revert:
+        description: Open a revert pull request when the release did not come out.
+        type: boolean
+        required: false
+        default: true
+      prerelease:
+        description: >-
+          Expected prerelease flag. Default false: a regular Release; a prerelease only for a
+          `-` version.
+        type: boolean
+        required: false
+        default: false
+      release-draft:
+        description: Create the Release as a draft (cargo-dist `create-release = false` undrafts it).
+        type: boolean
+        required: false
+        default: true
+      grace-minutes:
+        description: How long to wait for bump's own tag before taking over.
+        type: number
+        required: false
+        default: 15
+      release-timeout-minutes:
+        description: How long to wait for the release workflows on the tag.
+        type: number
+        required: false
+        default: 90
+    secrets:
+      BUMP_TOKEN:
+        description: Opens the revert PR (pass RELEASE_PLZ_TOKEN). Never merges.
+        required: false
+    outputs:
+      tag:
+        description: The release tag (empty when the push was not a release-PR merge).
+        value: ${{ jobs.guard.outputs.tag }}
+      result:
+        description: skipped | ok | failed.
+        value: ${{ jobs.guard.outputs.result }}
+      revert-pr:
+        description: URL of the revert PR, when one was opened.
+        value: ${{ jobs.guard.outputs.revert-pr }}
+
+permissions:
+  contents: read
+
+# Never cancelled: a newer merge waits, so a guard is never dropped half-way.
+concurrency:
+  group: release-guard-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    if: >-
+      github.event_name == 'push'
+      && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    permissions:
+      contents: write # tag, Release, revert branch
+      actions: write # dispatch the release workflows
+      pull-requests: write # the revert PR (BUMP_TOKEN does it in practice)
+    outputs:
+      tag: ${{ steps.detect.outputs.tag }}
+      result: ${{ steps.verify.outputs.result || steps.detect.outputs.result }}
+      revert-pr: ${{ steps.revert.outputs.url }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      R: ${{ github.repository }}
+      SHA: ${{ github.sha }}
+    steps:
+      - name: Is this push a release-PR merge?
+        id: detect
+        env:
+          TAG_PREFIX: ${{ inputs.tag-prefix }}
+          BRANCH_PREFIX: ${{ inputs.branch-prefix }}
+        run: |
+          set -euo pipefail
+          echo "result=skipped" >>"$GITHUB_OUTPUT"
+          subject="$(gh api "repos/$R/commits/$SHA" --jq '.commit.message | split("\n")[0]')"
+          case "$subject" in
+            Revert*|"ci: auto-revert"*) echo "a revert, not a release: skip"; exit 0 ;;
+          esac
+          branch="$(gh api "repos/$R/commits/$SHA/pulls" \
+            --jq "[.[] | select(.merged_at != null) | .head.ref | select(startswith(\"$BRANCH_PREFIX\"))] | .[0] // \"\"")"
+          tag=""
+          if [ -n "$branch" ]; then
+            tag="${branch#"$BRANCH_PREFIX"}"
+          elif [[ "$subject" =~ ^release:\ (v?[0-9][^[:space:]]*) ]]; then
+            tag="${BASH_REMATCH[1]}"
+            case "$tag" in "$TAG_PREFIX"*) ;; *) tag="$TAG_PREFIX$tag" ;; esac
+          fi
+          if [ -z "$tag" ]; then echo "not a release-PR merge ($subject): skip"; exit 0; fi
+          {
+            echo "tag=$tag"
+            echo "version=${tag#"$TAG_PREFIX"}"
+            echo "result=pending"
+            echo "pr-branch=$branch"
+          } >>"$GITHUB_OUTPUT"
+          echo "release-PR merge: $tag at $SHA"
+
+      - name: Wait for bump's own tag, then ensure tag, Release and release build
+        id: ensure
+        if: steps.detect.outputs.result == 'pending'
+        env:
+          TAG: ${{ steps.detect.outputs.tag }}
+          VERSION: ${{ steps.detect.outputs.version }}
+          ENSURE: ${{ inputs.ensure-release }}
+          DRAFT: ${{ inputs.release-draft }}
+          PRERELEASE: ${{ inputs.prerelease }}
+          GRACE: ${{ inputs.grace-minutes }}
+          RELEASE_WORKFLOWS: ${{ inputs.release-workflows }}
+        run: |
+          set -euo pipefail
+          tag_sha() { gh api "repos/$R/git/ref/tags/$TAG" --jq '.object.sha' 2>/dev/null || true; }
+          release_json() { gh release view "$TAG" -R "$R" --json isDraft,isPrerelease,assets 2>/dev/null || true; }
+
+          # bump creates the tag a few seconds after the merge; give it time.
+          deadline=$((SECONDS + GRACE * 60))
+          until [ -n "$(tag_sha)" ] || [ "$SECONDS" -ge "$deadline" ]; do sleep 20; done
+
+          dispatch=false
+          if [ -z "$(tag_sha)" ]; then
+            if [ "$ENSURE" != "true" ]; then echo "no tag $TAG and ensure-release is off"; exit 0; fi
+            echo "::warning title=release-guard::no tag $TAG after $GRACE min; creating it at $SHA"
+            gh api "repos/$R/git/refs" -f ref="refs/tags/$TAG" -f sha="$SHA" >/dev/null
+            dispatch=true
+          else
+            echo "tag $TAG exists ($(tag_sha))"
+          fi
+
+          if [ -z "$(release_json)" ]; then
+            if [ "$ENSURE" != "true" ]; then echo "no Release $TAG and ensure-release is off"; exit 0; fi
+            echo "::warning title=release-guard::no Release for $TAG; creating it"
+            export NOTES_FILE="$RUNNER_TEMP/notes.md"
+            gh api "repos/$R/contents/CHANGELOG.md?ref=$SHA" -H "Accept: application/vnd.github.raw" 2>/dev/null | awk -v v="$VERSION" '
+              /^## / { if (on) exit
+                       h = $0; sub(/^## \[?v?/, "", h)
+                       if (index(h, v) == 1 && substr(h, length(v) + 1, 1) !~ /[0-9A-Za-z.+-]/) { on = 1; next } }
+              on { print }' >"$NOTES_FILE" || true
+            args=(--verify-tag --title "$TAG")
+            if [ -s "$NOTES_FILE" ] && grep -q '[^[:space:]]' "$NOTES_FILE"; then
+              args+=(--notes-file "$NOTES_FILE")
+            else
+              args+=(--generate-notes)
+            fi
+            if [ "$PRERELEASE" = "true" ] || [[ "$VERSION" == *-* ]]; then args+=(--prerelease); fi
+            [ "$DRAFT" = "true" ] && args+=(--draft)
+            gh release create "$TAG" -R "$R" "${args[@]}"
+            dispatch=true
+          fi
+
+          while IFS= read -r w; do
+            w="$(xargs <<<"$w")"
+            [ -n "$w" ] || continue
+            # Reuse a run that is queued, running or green for this tag; start one otherwise
+            # only when the guard just created the tag or Release.
+            live="$(gh run list -R "$R" --workflow "$w" --event workflow_dispatch --branch "$TAG" \
+              --json status,conclusion --jq '[.[] | select(.status != "completed" or .conclusion == "success")] | length')"
+            if [ "$live" = "0" ] && [ "$dispatch" = "true" ]; then
+              gh workflow run "$w" -R "$R" --ref "$TAG" -f "tag=$TAG"
+              echo "::notice title=release-guard::dispatched $w for $TAG"
+              sleep 15
+            fi
+          done <<<"$RELEASE_WORKFLOWS"
+
+      - name: Verify the release came out
+        id: verify
+        if: steps.detect.outputs.result == 'pending'
+        env:
+          TAG: ${{ steps.detect.outputs.tag }}
+          VERSION: ${{ steps.detect.outputs.version }}
+          PRERELEASE: ${{ inputs.prerelease }}
+          TIMEOUT: ${{ inputs.release-timeout-minutes }}
+          RELEASE_WORKFLOWS: ${{ inputs.release-workflows }}
+        run: |
+          set -uo pipefail
+          reason=""
+          deadline=$((SECONDS + TIMEOUT * 60))
+          while IFS= read -r w; do
+            w="$(xargs <<<"$w")"
+            [ -n "$w" ] || continue
+            while :; do
+              row="$(gh run list -R "$R" --workflow "$w" --event workflow_dispatch --branch "$TAG" --limit 1 \
+                --json databaseId,status,conclusion,url --jq '.[0] // empty | [.status, .conclusion, .url] | @tsv')"
+              if [ -z "$row" ]; then reason="$w never ran on $TAG"; break; fi
+              IFS=$'\t' read -r st concl url <<<"$row"
+              if [ "$st" = "completed" ]; then
+                [ "$concl" = "success" ] || reason="$w on $TAG ended $concl: $url"
+                break
+              fi
+              if [ "$SECONDS" -ge "$deadline" ]; then reason="$w on $TAG still $st after $TIMEOUT min: $url"; break; fi
+              sleep 30
+            done
+          done <<<"$RELEASE_WORKFLOWS"
+
+          rel="$(gh release view "$TAG" -R "$R" --json isDraft,isPrerelease 2>/dev/null || true)"
+          if [ -z "$rel" ]; then
+            reason="${reason:+$reason; }no GitHub Release for $TAG"
+          else
+            [ "$(jq -r .isDraft <<<"$rel")" = "false" ] || reason="${reason:+$reason; }Release $TAG is still a draft"
+            want="$PRERELEASE"; [[ "$VERSION" == *-* ]] && want=true
+            [ "$(jq -r .isPrerelease <<<"$rel")" = "$want" ] \
+              || reason="${reason:+$reason; }Release $TAG prerelease flag is not $want"
+          fi
+          if [ -z "$reason" ]; then
+            echo "result=ok" >>"$GITHUB_OUTPUT"
+            echo "Release $TAG is published"
+          else
+            echo "result=failed" >>"$GITHUB_OUTPUT"
+            # single line, no newlines
+            echo "reason=$reason" >>"$GITHUB_OUTPUT"
+            echo "::error title=release-guard::$reason"
+          fi
+
+      - name: Open a revert pull request
+        id: revert
+        if: steps.verify.outputs.result == 'failed' && inputs.revert
+        env:
+          TAG: ${{ steps.detect.outputs.tag }}
+          REASON: ${{ steps.verify.outputs.reason }}
+          PUSH_TOKEN: ${{ secrets.BUMP_TOKEN || github.token }}
+          HAS_BUMP_TOKEN: ${{ secrets.BUMP_TOKEN != '' }}
+          DEFAULT: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          branch="revert/release-$TAG"
+          # Only once per tag: any earlier revert PR (open, merged or closed) or branch wins.
+          if [ -n "$(gh pr list -R "$R" --head "$branch" --state all --json number --jq '.[0].number // ""')" ] \
+             || git ls-remote --exit-code --heads "https://x-access-token:${PUSH_TOKEN}@github.com/${R}.git" "$branch" >/dev/null 2>&1; then
+            echo "a revert for $TAG already exists: nothing to do"; exit 0
+          fi
+          # A published Release (made meanwhile) means nothing to revert.
+          if [ "$(gh release view "$TAG" -R "$R" --json isDraft --jq .isDraft 2>/dev/null || echo true)" = "false" ] \
+             && [ "$(gh release view "$TAG" -R "$R" --json isPrerelease --jq .isPrerelease)" = "false" ]; then
+            echo "Release $TAG is published now: no revert"; exit 0
+          fi
+          url="https://x-access-token:${PUSH_TOKEN}@github.com/${R}.git"
+          git init --quiet revert && cd revert
+          git remote add origin "$url"
+          git fetch --quiet --no-tags origin "$DEFAULT" 
+          git checkout --quiet -b "$branch" FETCH_HEAD
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          parents="$(git rev-list --parents -n 1 "$SHA" | wc -w)"
+          if [ "$parents" -gt 2 ]; then mflag=(-m 1); else mflag=(); fi
+          if ! git revert --no-edit "${mflag[@]}" "$SHA"; then
+            echo "::error title=release-guard::reverting $SHA conflicts with newer commits on $DEFAULT; revert by hand"
+            exit 1
+          fi
+          git push --quiet origin "HEAD:refs/heads/$branch"
+          run="$GITHUB_SERVER_URL/$R/actions/runs/$GITHUB_RUN_ID"
+          body="$(printf '%s\n\n%s\n\n%s\n' \
+            "Reverts \`$SHA\` (release \`$TAG\`) because the release did not come out: $REASON ([run]($run))." \
+            "Opened by release-guard. It is not merged and not auto-merged: review it, then merge it or close it and fix the release instead. Merging it leaves the tag \`$TAG\` (and a draft Release, if any) in place: delete both by hand before releasing this version again." \
+            "No revert is opened twice for \`$TAG\`, and a revert is never reverted.")"
+          if [ "$HAS_BUMP_TOKEN" = "true" ]; then
+            pr="$(GH_TOKEN="$PUSH_TOKEN" gh pr create -R "$R" --base "$DEFAULT" --head "$branch" \
+              --title "Revert \"release: $TAG\"" --body "$body")"
+            echo "url=$pr" >>"$GITHUB_OUTPUT"
+            echo "::warning title=release-guard::opened revert PR $pr"
+          else
+            echo "::error title=release-guard::no BUMP_TOKEN: pushed $branch, open the PR: $GITHUB_SERVER_URL/$R/compare/$DEFAULT...$branch"
+          fi
+
+      - name: Fail the run when the release did not come out
+        if: steps.verify.outputs.result == 'failed'
+        env:
+          REASON: ${{ steps.verify.outputs.reason }}
+        run: |
+          echo "::error::$REASON"
+          exit 1
