@@ -26,7 +26,6 @@ Shared reusable GitHub workflows and build configs for pyrlyn repositories
 | [`license-check.yml`](.github/workflows/license-check.yml) | fail when the caller's LICENSE / commercial license / README license line drift from [`licenses/`](licenses/README.md) |
 | [`license-sync.yml`](.github/workflows/license-sync.yml) | open `chore/license-sync` PRs in the targets when [`licenses/`](licenses/README.md) changes; dry run and a clear error without `LICENSE_SYNC_TOKEN` |
 | [`pin-sync.yml`](.github/workflows/pin-sync.yml) | weekly `ci/pin-sync` PRs that move every consumer's pyrlyn/ci pins to one main commit and refresh the files rendered from [`templates/`](templates/); see [docs/pin-sync.md](docs/pin-sync.md) |
-| [`pages.yml`](.github/workflows/pages.yml) | build a static site and deploy it to GitHub Pages |
 | [`bump.yml`](.github/workflows/bump.yml) | **the only release path**: version commit -> PR -> required checks -> rebase merge -> tag + Release on the landed commit -> dispatch the release build |
 | [`notify-release-failure.yml`](.github/workflows/notify-release-failure.yml) | `release-failure` issue (mention + assign) when a release fails |
 | [`warnings-to-issues.yml`](.github/workflows/warnings-to-issues.yml) | one issue per code scanning / SonarCloud warning (deduplicated, closed when fixed); infra's own caller is [`warnings.yml`](.github/workflows/warnings.yml) |
