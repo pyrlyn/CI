@@ -8,7 +8,7 @@ Shared reusable GitHub workflows and build configs for pyrlyn repositories
 | Workflow | Purpose |
 | --- | --- |
 | [`ci-rust.yml`](.github/workflows/ci-rust.yml) | Rust CI: fmt, clippy, check, tests on a shared four-target matrix, optional MSRV |
-| [`lint.yml`](.github/workflows/lint.yml) | actionlint (+ shellcheck) on the caller's workflows |
+| [`lint.yml`](.github/workflows/lint.yml) | jactionlint (+ shellcheck) on the caller's workflows, composite actions and `dependabot.yml` |
 | [`codeql.yml`](.github/workflows/codeql.yml) | CodeQL code scanning per language |
 | [`semgrep.yml`](.github/workflows/semgrep.yml) | Semgrep OSS scan, SARIF to code scanning |
 | [`snyk.yml`](.github/workflows/snyk.yml) | Snyk Open Source scan, off by default (switch) |
