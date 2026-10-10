@@ -173,6 +173,16 @@ on:
         type: string
         required: false
         default: cargo check $PACKAGE_ARGS --all-targets $FEATURE_ARGS
+      mise-auto-install:
+        description: >-
+          Let mise install the caller's other `mise.toml` tools on demand. false (default) sets
+          MISE_AUTO_INSTALL=false in the `fmt` and `rust` jobs: only `mise-install-args` is
+          installed by the mise step. Otherwise the first `rustup` or `cargo` call through a
+          mise shim installs every tool of the caller's mise.toml (several minutes on Windows).
+          Set true only when a command of the caller needs such a tool without installing it.
+        type: boolean
+        required: false
+        default: false
       timeout-minutes:
         description: Timeout of each job.
         type: number
@@ -360,6 +370,8 @@ jobs:
     if: needs.plan.outputs.run == 'true'
     runs-on: ${{ inputs.fmt-runs-on }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
+    env:
+      MISE_AUTO_INSTALL: ${{ inputs.mise-auto-install }}
     defaults:
       run:
         shell: bash
@@ -414,6 +426,7 @@ jobs:
       TARGET: ${{ matrix.target }}
       RUN: ${{ needs.plan.outputs.run }}
       PACKAGE_ARGS: ${{ needs.plan.outputs.package-args }}
+      MISE_AUTO_INSTALL: ${{ inputs.mise-auto-install }}
     defaults:
       run:
         shell: bash
