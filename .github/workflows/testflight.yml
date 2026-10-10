@@ -4,6 +4,10 @@ name: testflight
 # (discover), the same Developer ID import the other Apple workflows use. The App Store Connect
 # API key is the same trio that action uses for notarization; altool uploads the IPA.
 #
+# The key is written to ~/private_keys before the build command, so an xcodebuild export with
+# -authenticationKeyPath can sign through App Store Connect. A build that signs that way needs no
+# Developer ID certificate and sets developer-id: false.
+#
 # A pull request never uploads. github.event_name inside a reusable workflow is the caller's
 # event, so a caller triggered by pull_request or pull_request_target skips the upload even if
 # it passes the secrets. The upload step also refuses those events if it is reached.
@@ -46,6 +50,18 @@ on:
         type: string
         required: false
         default: ""
+      setup-mise:
+        description: Install the tools of the caller's mise.toml (working-directory) before the build.
+        type: boolean
+        required: false
+        default: false
+      developer-id:
+        description: >-
+          Check the Developer ID certificate with macos-sign. TestFlight does not use it; set
+          false when the build signs with the App Store Connect key.
+        type: boolean
+        required: false
+        default: true
       timeout-minutes:
         description: Timeout of the job.
         type: number
@@ -111,11 +127,35 @@ jobs:
         with:
           version: ${{ inputs.xcode-version }}
 
+      - if: inputs.setup-mise
+        uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
+        with:
+          working_directory: ${{ inputs.working-directory }}
+
+      # Only a run that may upload gets the key, so a pull request build never sees it. A missing
+      # secret is left to the upload step, which names it.
+      - name: App Store Connect key
+        if: steps.gate.outputs.allow == 'true'
+        env:
+          APPSTORE_CONNECT_KEY: ${{ secrets.APPSTORE_CONNECT_KEY }}
+          APPSTORE_CONNECT_KEY_ID: ${{ secrets.APPSTORE_CONNECT_KEY_ID }}
+        run: |
+          set -euo pipefail
+          [ -n "$APPSTORE_CONNECT_KEY" ] && [ -n "$APPSTORE_CONNECT_KEY_ID" ] || exit 0
+          [[ "$APPSTORE_CONNECT_KEY_ID" =~ ^[A-Za-z0-9]+$ ]] \
+            || { echo "APPSTORE_CONNECT_KEY_ID is not a key id" >&2; exit 1; }
+          # altool and xcodebuild read AuthKey_<id>.p8 from ~/private_keys. The key bytes are not printed.
+          dir="${HOME}/private_keys"
+          mkdir -p "$dir"
+          (umask 077 && echo "$APPSTORE_CONNECT_KEY" | base64 --decode > "$dir/AuthKey_${APPSTORE_CONNECT_KEY_ID}.p8")
+
       - name: Build
         if: inputs.build-command != ''
         working-directory: ${{ inputs.working-directory }}
         env:
           BUILD_COMMAND: ${{ inputs.build-command }}
+          APPSTORE_CONNECT_KEY_ID: ${{ steps.gate.outputs.allow == 'true' && secrets.APPSTORE_CONNECT_KEY_ID || '' }}
+          APPSTORE_CONNECT_ISSUER_ID: ${{ steps.gate.outputs.allow == 'true' && secrets.APPSTORE_CONNECT_ISSUER_ID || '' }}
         run: |
           set -euo pipefail
           eval "$BUILD_COMMAND"
@@ -123,7 +163,7 @@ jobs:
       # macos-sign deletes its throwaway keychain when the step ends. discover still proves the
       # .p12 imports and exports the Developer ID hash the rest of the Apple tooling expects.
       - name: Signing identity
-        if: steps.gate.outputs.allow == 'true'
+        if: steps.gate.outputs.allow == 'true' && inputs.developer-id
         uses: $/.github/actions/macos-sign # nosemgrep: github-actions-mutable-action-tag
         with:
           mode: discover
@@ -162,16 +202,14 @@ jobs:
             /*|*..*) echo "ipa must be a relative path" >&2; exit 1 ;;
           esac
           [ -f "$IPA" ] || { echo "no IPA at $IPA" >&2; exit 1; }
-          [[ "$APPSTORE_CONNECT_KEY_ID" =~ ^[A-Za-z0-9]+$ ]] \
-            || { echo "APPSTORE_CONNECT_KEY_ID is not a key id" >&2; exit 1; }
-          # altool reads AuthKey_<id>.p8 from ~/private_keys. The key bytes are not printed.
-          dir="${HOME}/private_keys"
-          mkdir -p "$dir"
-          key="$dir/AuthKey_${APPSTORE_CONNECT_KEY_ID}.p8"
-          trap 'rm -f "$key"' EXIT
-          echo "$APPSTORE_CONNECT_KEY" | base64 --decode > "$key"
+          [ -f "${HOME}/private_keys/AuthKey_${APPSTORE_CONNECT_KEY_ID}.p8" ] \
+            || { echo "the App Store Connect key was not written" >&2; exit 1; }
           xcrun altool --upload-app --type ios -f "$IPA" \
             --apiKey "$APPSTORE_CONNECT_KEY_ID" --apiIssuer "$APPSTORE_CONNECT_ISSUER_ID"
+
+      - name: Remove the App Store Connect key
+        if: always()
+        run: rm -f "${HOME}"/private_keys/AuthKey_*.p8
 
       - name: Cancel the run on failure
         if: failure() && inputs.cancel-run-on-failure
