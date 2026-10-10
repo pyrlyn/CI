@@ -1,3 +1,4 @@
 [tools]
-actionlint = "1.7.12" # lint.yml and local `mise x -- actionlint`
-shellcheck = "0.11.0" # used by actionlint for run: scripts; CI uses the runner image's copy
+"github:jdx/jactionlint" = "2.0.2" # lint.yml, the pre-push hook and local `mise x -- jactionlint`
+hk = "2.5.0" # runs jactionlint as a pre-push hook (hk.pkl); `mise x -- hk install --mise`
+shellcheck = "0.11.0" # used by jactionlint for run: scripts; CI uses the runner image's copy

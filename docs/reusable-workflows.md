@@ -9,7 +9,7 @@ repository. All third-party actions are pinned to full commit SHAs.
 | `ci-rust.yml` | fmt, clippy, check, tests on a shared OS/target matrix, optional MSRV |
 | `ci-dotnet.yml` | `dotnet test` for every solution; a passing no-op until a .NET project exists |
 | `changes.yml` | classify changed files by ecosystem (Rust, Swift, .NET) for suite selection |
-| `lint.yml` | actionlint (+ shellcheck) on the caller's workflows; cargo-dist's generated `release.yml` is skipped (`ignore-generated`). In this repository the same file also runs on pull requests and on every push to `main` |
+| `lint.yml` | jactionlint (+ shellcheck) on the caller's workflows, composite actions and `dependabot.yml`, with the caller's `.github/jactionlint.yaml` (profile, `baseline: auto`); files a tool generated (cargo-dist's `release.yml`) get only the correctness and security rules (`generated-files`). In this repository the same file also runs on pull requests and on every push to `main` |
 | `codeql.yml` | CodeQL per language, SARIF to code scanning |
 | `semgrep.yml` | Semgrep OSS (`p/default`), SARIF to code scanning |
 | `snyk.yml` | Snyk Open Source; off by default (switch), skipped without a token |
@@ -1388,6 +1388,5 @@ jobs:
           version: "27"
 ```
 
-A caller whose own workflows use `runs-on: xcode-27` and lint them with actionlint 1.7.12 adds
-the label under `self-hosted-runner.labels` in `.github/actionlint.yaml` (as this repository
-does): that actionlint release predates the image.
+jactionlint knows the `xcode-27` labels, so a caller that lints with `lint.yml` needs no
+`self-hosted-runner.labels` entry for them.

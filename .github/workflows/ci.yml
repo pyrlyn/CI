@@ -217,8 +217,7 @@ jobs:
     with:
       cancel-run-on-failure: ${{ fromJSON(needs.config.outputs.json).cancel-run-on-failure }}
       skip-drafts: ${{ fromJSON(needs.config.outputs.json).skip-drafts }}
-      actionlint-version: ${{ fromJSON(needs.config.outputs.json).lint.actionlint-version }}
-      ignore-generated: ${{ fromJSON(needs.config.outputs.json).lint.ignore-generated }}
+      jactionlint-version: ${{ fromJSON(needs.config.outputs.json).lint.jactionlint-version }}
       args: ${{ fromJSON(needs.config.outputs.json).lint.args }}
       extra-command: ${{ fromJSON(needs.config.outputs.json).lint.extra-command }}
 

@@ -1,0 +1,237 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "file": ".github/actions/config/action.yml",
+      "rule": "shellcheck",
+      "fingerprint": "8f16dddbaea0eebc",
+      "context": "66c32aafda7e5c48",
+      "occurrence": 0,
+      "message": "shellcheck reported issue in this script: SC2016:info:11:31: Expressions don't expand in single quotes, use double quotes for that"
+    },
+    {
+      "file": ".github/workflows/build-cli.yml",
+      "rule": "missing-timeout",
+      "fingerprint": "9c11787ba90227ec",
+      "context": "c67d416bd2037202",
+      "occurrence": 0,
+      "message": "\"timeout-minutes\" is not set at this job. Set it to avoid wasting runner minutes when the job hangs"
+    },
+    {
+      "file": ".github/workflows/bump.yml",
+      "rule": "cache-poisoning",
+      "fingerprint": "43618d91bec7f8ac",
+      "context": "c494d17c178efb10",
+      "occurrence": 0,
+      "message": "jdx/mise-action restores a cache although the job runs \"gh release create\", so a poisoned cache entry can end up in the published artifacts. set \"cache: false\", or set \"cache-mode: none\" on the job"
+    },
+    {
+      "file": ".github/workflows/ci-rust.yml",
+      "rule": "excessive-permissions",
+      "fingerprint": "9bd1b1c5e3a573f7",
+      "context": "09f41c640e0ff8ea",
+      "occurrence": 0,
+      "message": "\"actions: write\" is granted to every job of the workflow, which lets any of them cancel and re-run workflow runs and manage caches and artifacts. set \"permissions: {}\" at the workflow level and grant \"actions: write\" only to the job which needs it"
+    },
+    {
+      "file": ".github/workflows/ci.yml",
+      "rule": "excessive-permissions",
+      "fingerprint": "9bd1b1c5e3a573f7",
+      "context": "09f41c640e0ff8ea",
+      "occurrence": 0,
+      "message": "\"actions: write\" is granted to every job of the workflow, which lets any of them cancel and re-run workflow runs and manage caches and artifacts. set \"permissions: {}\" at the workflow level and grant \"actions: write\" only to the job which needs it"
+    },
+    {
+      "file": ".github/workflows/cla.yml",
+      "rule": "dangerous-triggers",
+      "fingerprint": "610b76a24d83b82c",
+      "context": "5935855348a187bf",
+      "occurrence": 0,
+      "message": "trigger \"pull_request_target\" is dangerous: it runs in the context of the base repository with a write token and secrets even when the pull request comes from a fork. use \"pull_request\" unless write access is required, and never check out or run code of the pull request"
+    },
+    {
+      "file": ".github/workflows/cla.yml",
+      "rule": "dangerous-triggers",
+      "fingerprint": "a93f6bb245795441",
+      "context": "679173a66b3203d5",
+      "occurrence": 0,
+      "message": "trigger \"issue_comment\" is dangerous: it runs in the context of the default branch with a write token and secrets and can be started by anyone who can comment. check the permission of the commenter and never run code of the pull request"
+    },
+    {
+      "file": ".github/workflows/codeql.yml",
+      "rule": "missing-timeout",
+      "fingerprint": "83edd35103239d1b",
+      "context": "94f6b798c1d7dbca",
+      "occurrence": 0,
+      "message": "\"timeout-minutes\" is not set at this job. Set it to avoid wasting runner minutes when the job hangs"
+    },
+    {
+      "file": ".github/workflows/lint.yml",
+      "rule": "missing-timeout",
+      "fingerprint": "bfc25638402f85c4",
+      "context": "b599ed7b4e1bee29",
+      "occurrence": 0,
+      "message": "\"timeout-minutes\" is not set at this job. Set it to avoid wasting runner minutes when the job hangs"
+    },
+    {
+      "file": ".github/workflows/pipeline.yml",
+      "rule": "excessive-permissions",
+      "fingerprint": "9bd1b1c5e3a573f7",
+      "context": "09f41c640e0ff8ea",
+      "occurrence": 0,
+      "message": "\"actions: write\" is granted to every job of the workflow, which lets any of them cancel and re-run workflow runs and manage caches and artifacts. set \"permissions: {}\" at the workflow level and grant \"actions: write\" only to the job which needs it"
+    },
+    {
+      "file": ".github/workflows/publish-release.yml",
+      "rule": "missing-timeout",
+      "fingerprint": "3096ba7884d9d7fa",
+      "context": "77b112513fd382c9",
+      "occurrence": 0,
+      "message": "\"timeout-minutes\" is not set at this job. Set it to avoid wasting runner minutes when the job hangs"
+    },
+    {
+      "file": ".github/workflows/release-apple-desktop.yml",
+      "rule": "cache-poisoning",
+      "fingerprint": "767c5d667f182217",
+      "context": "4394320ca2fe5bb6",
+      "occurrence": 0,
+      "message": "jdx/mise-action restores a cache although the job runs \"gh release create\", so a poisoned cache entry can end up in the published artifacts. set \"cache: false\", or set \"cache-mode: none\" on the job"
+    },
+    {
+      "file": ".github/workflows/release-plz.yml",
+      "rule": "excessive-permissions",
+      "fingerprint": "9bd1b1c5e3a573f7",
+      "context": "09f41c640e0ff8ea",
+      "occurrence": 0,
+      "message": "\"actions: write\" is granted to every job of the workflow, which lets any of them cancel and re-run workflow runs and manage caches and artifacts. set \"permissions: {}\" at the workflow level and grant \"actions: write\" only to the job which needs it"
+    },
+    {
+      "file": ".github/workflows/release-plz.yml",
+      "rule": "missing-timeout",
+      "fingerprint": "7ba5ede9ecf9f407",
+      "context": "c465f6acdfc3b0a3",
+      "occurrence": 0,
+      "message": "\"timeout-minutes\" is not set at this job. Set it to avoid wasting runner minutes when the job hangs"
+    },
+    {
+      "file": ".github/workflows/release.yml",
+      "rule": "excessive-permissions",
+      "fingerprint": "9bd1b1c5e3a573f7",
+      "context": "09f41c640e0ff8ea",
+      "occurrence": 0,
+      "message": "\"actions: write\" is granted to every job of the workflow, which lets any of them cancel and re-run workflow runs and manage caches and artifacts. set \"permissions: {}\" at the workflow level and grant \"actions: write\" only to the job which needs it"
+    },
+    {
+      "file": ".github/workflows/release.yml",
+      "rule": "missing-timeout",
+      "fingerprint": "c9cf052a0948a014",
+      "context": "ec0ab2e76b324a03",
+      "occurrence": 0,
+      "message": "\"timeout-minutes\" is not set at this job. Set it to avoid wasting runner minutes when the job hangs"
+    },
+    {
+      "file": ".github/workflows/release.yml",
+      "rule": "missing-timeout",
+      "fingerprint": "9c11787ba90227ec",
+      "context": "c67d416bd2037202",
+      "occurrence": 0,
+      "message": "\"timeout-minutes\" is not set at this job. Set it to avoid wasting runner minutes when the job hangs"
+    },
+    {
+      "file": ".github/workflows/release.yml",
+      "rule": "missing-timeout",
+      "fingerprint": "27629170a0b142d6",
+      "context": "76fd9b3924267e58",
+      "occurrence": 0,
+      "message": "\"timeout-minutes\" is not set at this job. Set it to avoid wasting runner minutes when the job hangs"
+    },
+    {
+      "file": ".github/workflows/release.yml",
+      "rule": "cache-poisoning",
+      "fingerprint": "e075f385bddcb609",
+      "context": "4394320ca2fe5bb6",
+      "occurrence": 0,
+      "message": "jdx/mise-action restores a cache although the job runs \"gh release upload\", so a poisoned cache entry can end up in the published artifacts. set \"cache: false\", or set \"cache-mode: none\" on the job"
+    },
+    {
+      "file": ".github/workflows/release.yml",
+      "rule": "missing-timeout",
+      "fingerprint": "3096ba7884d9d7fa",
+      "context": "77b112513fd382c9",
+      "occurrence": 0,
+      "message": "\"timeout-minutes\" is not set at this job. Set it to avoid wasting runner minutes when the job hangs"
+    },
+    {
+      "file": ".github/workflows/renovate.yml",
+      "rule": "github-app",
+      "fingerprint": "9ce6accc46f99233",
+      "context": "9926202d947f5be9",
+      "occurrence": 0,
+      "message": "no \"permission-*\" input is set, so the token gets every permission granted to the GitHub App. request only what the job needs, for instance \"permission-contents: read\""
+    },
+    {
+      "file": ".github/workflows/renovate.yml",
+      "rule": "github-app",
+      "fingerprint": "3bd4628256d1ce2f",
+      "context": "564330d66343f195",
+      "occurrence": 0,
+      "message": "\"owner\" without \"repositories\" issues a token with access to every repository of the owner where the app is installed. list the repositories the token is for in \"repositories\""
+    },
+    {
+      "file": ".github/workflows/self-test.yml",
+      "rule": "missing-timeout",
+      "fingerprint": "d048528f7208bebf",
+      "context": "8ae8f62d03ddfd62",
+      "occurrence": 0,
+      "message": "\"timeout-minutes\" is not set at this job. Set it to avoid wasting runner minutes when the job hangs"
+    },
+    {
+      "file": ".github/workflows/self-test.yml",
+      "rule": "missing-timeout",
+      "fingerprint": "8b040f2c65cd67de",
+      "context": "2df310bb834f8c84",
+      "occurrence": 0,
+      "message": "\"timeout-minutes\" is not set at this job. Set it to avoid wasting runner minutes when the job hangs"
+    },
+    {
+      "file": ".github/workflows/self-test.yml",
+      "rule": "missing-timeout",
+      "fingerprint": "4337f23b19879a07",
+      "context": "0f9cf2ca0c794c69",
+      "occurrence": 0,
+      "message": "\"timeout-minutes\" is not set at this job. Set it to avoid wasting runner minutes when the job hangs"
+    },
+    {
+      "file": ".github/workflows/semgrep.yml",
+      "rule": "missing-timeout",
+      "fingerprint": "daf0fe2b63e540bf",
+      "context": "81e5a2cd839214cd",
+      "occurrence": 0,
+      "message": "\"timeout-minutes\" is not set at this job. Set it to avoid wasting runner minutes when the job hangs"
+    },
+    {
+      "file": ".github/workflows/snyk.yml",
+      "rule": "missing-timeout",
+      "fingerprint": "15f7f2fd6925f4ef",
+      "context": "2fcd66cb1402c448",
+      "occurrence": 0,
+      "message": "\"timeout-minutes\" is not set at this job. Set it to avoid wasting runner minutes when the job hangs"
+    },
+    {
+      "file": ".github/workflows/sync-docs.yml",
+      "rule": "checkout-static-credentials",
+      "fingerprint": "78fe43d76287c71d",
+      "context": "0b8d84bacb20b263",
+      "occurrence": 0,
+      "message": "actions/checkout is given secret \"SITE_DEPLOY_KEY\" as \"ssh-key\". this credential does not expire and can reach more than this job needs, and unless \"persist-credentials: false\" is set it is also left in the git config of the workspace for every later step to read. use the default GITHUB_TOKEN for this repository. to reach other repositories or to push something that starts other workflows, use a short-lived token from a GitHub App (actions/create-github-app-token) or a fine-grained personal access token limited to the repositories it needs, and keep it in a secret of a protected environment"
+    },
+    {
+      "file": ".github/workflows/warnings.yml",
+      "rule": "dangerous-triggers",
+      "fingerprint": "e1b416090046774f",
+      "context": "36b936d1654e3276",
+      "occurrence": 0,
+      "message": "trigger \"workflow_run\" is dangerous: it runs in the context of the default branch with a write token and secrets, but processes artifacts and metadata produced by a run that a fork may control. consider a reusable workflow called with \"workflow_call\" instead, and never trust the artifacts or the event payload"
+    }
+  ]
+}
