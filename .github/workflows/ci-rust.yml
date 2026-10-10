@@ -18,6 +18,10 @@ name: ci-rust
 # action and fail when the runner has none; the shared matrix runs them on `xcode-27`, the
 # GitHub image that ships Xcode 27 (macos-latest / macos-26 carry Xcode 26.x).
 #
+# `nextest-archive` (off) builds `cargo nextest archive` once per entry and runs the tests from
+# it; `sccache` (off) wires sccache to a Cloudflare R2 bucket and is a no-op without the R2
+# secrets. Both are opt-in; see docs/index.md.
+#
 # A failed job cancels the whole run (`cancel-run-on-failure`, on by default).
 #
 # `plan` classifies the changed files (the `changes` action). A change to any Cargo.toml or
@@ -214,6 +218,55 @@ on:
         type: string
         required: false
         default: --workspace
+      nextest-archive:
+        description: >-
+          Build `cargo nextest archive` once per matrix entry, after clippy and check and
+          before the tests, and upload it as the artifact `nextest-archive-<target>`. The
+          archive is built and run in the same job (same OS and target). The path is in
+          `NEXTEST_ARCHIVE`: a `test-command` runs it with
+          `cargo nextest run --archive-file "$NEXTEST_ARCHIVE" --workspace-remap .`. Needs
+          nextest in `tools`. Only entries that run tests build it. false (default) changes
+          nothing: `test-command` runs as before.
+        type: boolean
+        required: false
+        default: false
+      nextest-archive-args:
+        description: >-
+          Arguments of `cargo nextest archive`. Empty uses
+          `$PACKAGE_ARGS --all-targets $FEATURE_ARGS $LOCKED_ARGS`.
+        type: string
+        required: false
+        default: ""
+      sccache:
+        description: >-
+          Use sccache with a Cloudflare R2 bucket as RUSTC_WRAPPER. Needs the secrets
+          R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY and the variables (or inputs)
+          SCCACHE_BUCKET and SCCACHE_ENDPOINT. When any is missing (fork pull request,
+          Dependabot, bucket not created yet) the wrapper is cleared and the build runs
+          without sccache; nothing fails. Pull requests only read the cache. false (default)
+          changes nothing.
+        type: boolean
+        required: false
+        default: false
+      sccache-bucket:
+        description: R2 bucket name. Empty uses the caller's variable SCCACHE_BUCKET.
+        type: string
+        required: false
+        default: ""
+      sccache-endpoint:
+        description: >-
+          https://<ACCOUNT_ID>.r2.cloudflarestorage.com. Empty uses the caller's variable
+          SCCACHE_ENDPOINT.
+        type: string
+        required: false
+        default: ""
+    secrets:
+      R2_ACCESS_KEY_ID:
+        description: R2 API token Access Key ID for sccache (optional).
+        required: false
+      R2_SECRET_ACCESS_KEY:
+        description: R2 API token Secret Access Key for sccache (optional).
+        required: false
 
 permissions:
   contents: read
@@ -460,6 +513,50 @@ jobs:
         with:
           tool: ${{ inputs.tools }}
 
+      - name: sccache configuration
+        id: sccache
+        if: env.RUN == 'true' && inputs.sccache
+        env:
+          ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          BUCKET: ${{ inputs.sccache-bucket || vars.SCCACHE_BUCKET }}
+          ENDPOINT: ${{ inputs.sccache-endpoint || vars.SCCACHE_ENDPOINT }}
+        run: |
+          if [ -n "$ACCESS_KEY_ID" ] && [ -n "$SECRET_ACCESS_KEY" ] && [ -n "$BUCKET" ] \
+            && [ -n "$ENDPOINT" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            # mise.toml may export its own sccache as the wrapper; without a backend, drop it.
+            echo "RUSTC_WRAPPER=" >> "$GITHUB_ENV"
+            echo "::notice title=sccache::off: the R2 secrets or variables are not available"
+          fi
+
+      - if: env.RUN == 'true' && inputs.sccache && steps.sccache.outputs.enabled == 'true'
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        with:
+          version: v0.18.0
+
+      - name: sccache environment
+        if: env.RUN == 'true' && inputs.sccache && steps.sccache.outputs.enabled == 'true'
+        env:
+          ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          BUCKET: ${{ inputs.sccache-bucket || vars.SCCACHE_BUCKET }}
+          ENDPOINT: ${{ inputs.sccache-endpoint || vars.SCCACHE_ENDPOINT }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          {
+            echo "RUSTC_WRAPPER=sccache"
+            echo "CARGO_INCREMENTAL=0"
+            echo "SCCACHE_BUCKET=$BUCKET"
+            echo "SCCACHE_ENDPOINT=$ENDPOINT"
+            echo "SCCACHE_REGION=auto"
+            echo "AWS_ACCESS_KEY_ID=$ACCESS_KEY_ID"
+            echo "AWS_SECRET_ACCESS_KEY=$SECRET_ACCESS_KEY"
+            if [ "$EVENT_NAME" = pull_request ]; then echo "SCCACHE_S3_RW_MODE=READ_ONLY"; fi
+          } >> "$GITHUB_ENV"
+
       - name: Setup
         if: env.RUN == 'true' && inputs.setup-command != ''
         env:
@@ -487,6 +584,37 @@ jobs:
           # shellcheck disable=SC2086
           cargo check $PACKAGE_ARGS --all-targets $FEATURE_ARGS $TARGET_ARGS $CARGO_ARGS \
             $CLIPPY_LOCKED_ARGS
+
+      - name: nextest archive
+        if: >-
+          env.RUN == 'true' && env.NATIVE == 'true' && inputs.test-command != ''
+          && inputs.nextest-archive
+        env:
+          ARCHIVE_ARGS: ${{ inputs.nextest-archive-args }}
+          FEATURE_ARGS: ${{ inputs.feature-args }}
+        run: |
+          set -euo pipefail
+          command -v cargo-nextest >/dev/null \
+            || { echo "::error::nextest-archive needs nextest in the tools input"; exit 1; }
+          archive="$RUNNER_TEMP/nextest-archive-$TARGET.tar.zst"
+          if [ -z "$ARCHIVE_ARGS" ]; then
+            ARCHIVE_ARGS="$PACKAGE_ARGS --all-targets $FEATURE_ARGS $LOCKED_ARGS"
+          fi
+          # ARCHIVE_ARGS and TARGET_ARGS are split on whitespace on purpose.
+          # shellcheck disable=SC2086
+          cargo nextest archive $ARCHIVE_ARGS $TARGET_ARGS --archive-file "$archive"
+          echo "NEXTEST_ARCHIVE=$archive" >> "$GITHUB_ENV"
+
+      - name: nextest archive artifact
+        if: >-
+          env.RUN == 'true' && env.NATIVE == 'true' && inputs.test-command != ''
+          && inputs.nextest-archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nextest-archive-${{ matrix.target }}
+          path: ${{ env.NEXTEST_ARCHIVE }}
+          retention-days: 1
+          if-no-files-found: error
 
       - name: test
         if: env.RUN == 'true' && env.NATIVE == 'true' && inputs.test-command != ''
