@@ -129,6 +129,43 @@ jobs:
         test -z "${RUSTC_WRAPPER:-}"
         cargo nextest run --archive-file "$NEXTEST_ARCHIVE" --workspace-remap .
 
+  # mold: true installs mold and clang on Linux and the fixture's mise [env] makes it the
+  # linker. The test-command builds the CLI and proves it: the ELF `.comment` names mold.
+  # mold-off (below) is the default and must not link with mold.
+  mold:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    name: mold
+    uses: ./.github/workflows/ci-rust.yml
+    permissions:
+      contents: read
+      actions: write # cancel-run on failure
+    with:
+      working-directory: tests/fixtures/rust-crate
+      mold: true
+      matrix: '[{"os": "ubuntu-latest", "target": "x86_64-unknown-linux-gnu"}]'
+      test-command: |
+        set -euo pipefail
+        mold --version | grep -q 'mold 2.42.1'
+        [[ "$CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS" == *fuse-ld=mold* ]]
+        cargo build -p ci-rust-fixture-cli --target "$TARGET"
+        bin="$(find target -path '*debug/ci-rust-fixture-cli' -type f | head -1)"
+        readelf -p .comment "$bin" | tee /dev/stderr | grep -q 'mold 2.42.1'
+
+  mold-off:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    name: mold-off
+    uses: ./.github/workflows/ci-rust.yml
+    permissions:
+      contents: read
+      actions: write # cancel-run on failure
+    with:
+      working-directory: tests/fixtures/rust-crate
+      matrix: '[{"os": "ubuntu-latest", "target": "x86_64-unknown-linux-gnu"}]'
+      test-command: |
+        set -euo pipefail
+        ! command -v mold
+        [ -z "${CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS:-}" ]
+
   mise-auto-off:
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: mise-auto-off

@@ -173,6 +173,17 @@ on:
         type: string
         required: false
         default: cargo check $PACKAGE_ARGS --all-targets $FEATURE_ARGS
+      mold:
+        description: >-
+          Install the mold linker on Linux runners, for callers whose `mise.toml` pins
+          `mold` and turns it on through `[env]` (CARGO_TARGET_*_LINUX_GNU_RUSTFLAGS with
+          `-C linker=clang -C link-arg=-fuse-ld=mold`). mise does not auto-install it
+          (`mise-auto-install` false), so this adds `mold` to `mise-install-args` on Linux, and
+          installs clang with apt when the runner lacks it. A no-op on macOS and Windows and
+          when `rust-version` is set (mise is not used then). false (default) changes nothing.
+        type: boolean
+        required: false
+        default: false
       mise-auto-install:
         description: >-
           Let mise install the caller's other `mise.toml` tools on demand. false (default) sets
@@ -449,7 +460,16 @@ jobs:
         uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
         with:
           working_directory: ${{ inputs.working-directory }}
-          install_args: ${{ inputs.mise-install-args }}
+          install_args: ${{ inputs.mold && runner.os == 'Linux' && format('{0} mold', inputs.mise-install-args) || inputs.mise-install-args }}
+
+      # mold links through clang. ubuntu-latest ships it; install it when a runner does not.
+      - if: env.RUN == 'true' && inputs.mold && runner.os == 'Linux' && inputs.rust-version == ''
+        name: clang for mold
+        run: |
+          set -euo pipefail
+          command -v clang >/dev/null || { sudo apt-get update -y && sudo apt-get install -y clang; }
+          clang --version | head -1
+          mold --version
 
       # Make the pin the active toolchain for every later rustup/cargo call, add the
       # target, and fail if rustc is anything else (e.g. the runner image's own stable).

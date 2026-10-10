@@ -1,3 +1,9 @@
 # The caller-side pin ci-rust.yml reads when `rust-version` is empty.
 [tools]
 rust = { version = "1.98.1", components = "rustfmt,clippy" }
+# Used by the self-test job `mold`: pinned, but installed only when ci-rust's `mold` input is true.
+# The [env] turns it on only where mise has installed it (the probe variable stops recursion).
+mold = { version = "2.42.1", os = ["linux"] }
+
+[env]
+CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS = "{% if os() == 'linux' and get_env(name='MISE_MOLD_PROBE', default='') == '' %}{{ exec(command='MISE_MOLD_PROBE=1 \"' ~ mise_bin ~ '\" which mold >/dev/null 2>&1 && echo \"-C linker=clang -C link-arg=-fuse-ld=mold\" || true') }}{% endif %}"

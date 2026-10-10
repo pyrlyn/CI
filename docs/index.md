@@ -66,6 +66,7 @@ jobs:
 | `fmt-runs-on` | `ubuntu-latest` | Runner label of the `fmt` job. |
 | `working-directory` | `.` | Cargo workspace directory. |
 | `mise-install-args` | `rust` | Tools mise installs when `rust-version` is empty. |
+| `mold` | `false` | Linux only: add `mold` to the mise install (mise does not auto-install it) and ensure clang. The caller's `mise.toml` pins `mold` and sets `CARGO_TARGET_*_LINUX_GNU_RUSTFLAGS` in `[env]`. No-op when `rust-version` is set. |
 | `clippy-args` | `""` | Extra arguments for clippy and check, placed before `--`. |
 | `tools` | `""` | Tools installed with `taiki-e/install-action` (e.g. `nextest`). |
 | `setup-command` | `""` | Bash run in every matrix job before clippy (`RUNNER_OS` and `TARGET` are set). |
