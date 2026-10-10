@@ -1128,6 +1128,7 @@ jobs:
 | `runs-on` | `macos-26` |
 | `xcode-version` | `""` (image default; otherwise `setup-xcode`) |
 | `setup-mise` | `false` (`true` installs the caller's `mise.toml` tools before the build) |
+| `mise-install-args` | `""` (every tool; e.g. `pipx:translate-toolkit` installs only that one) |
 | `developer-id` | `true` (`false` skips the Developer ID check, which TestFlight does not use) |
 | `timeout-minutes` | `90` |
 | `cancel-run-on-failure` | `true` |

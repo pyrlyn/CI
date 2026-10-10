@@ -55,6 +55,11 @@ on:
         type: boolean
         required: false
         default: false
+      mise-install-args:
+        description: Tools mise installs with setup-mise. Empty installs every tool in mise.toml.
+        type: string
+        required: false
+        default: ""
       developer-id:
         description: >-
           Check the Developer ID certificate with macos-sign. TestFlight does not use it; set
@@ -131,6 +136,7 @@ jobs:
         uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
         with:
           working_directory: ${{ inputs.working-directory }}
+          install_args: ${{ inputs.mise-install-args }}
 
       # Only a run that may upload gets the key, so a pull request build never sees it. A missing
       # secret is left to the upload step, which names it.
