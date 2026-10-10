@@ -1,3 +1,6 @@
 # The caller-side pin ci-rust.yml reads when `rust-version` is empty.
 [tools]
 rust = { version = "1.98.1", components = "rustfmt,clippy" }
+node = "lts"  # TEMP measurement
+ruby = "latest"  # TEMP measurement
+dotnet = "latest"  # TEMP measurement

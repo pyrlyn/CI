@@ -129,6 +129,30 @@ jobs:
         test -z "${RUSTC_WRAPPER:-}"
         cargo nextest run --archive-file "$NEXTEST_ARCHIVE" --workspace-remap .
 
+  mise-auto-off:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    name: mise-auto-off
+    uses: ./.github/workflows/ci-rust.yml
+    permissions:
+      contents: read
+      actions: write # cancel-run on failure
+    with:
+      working-directory: tests/fixtures/rust-crate
+      mise-auto-install: false
+      matrix: '[{"os": "windows-latest", "target": "x86_64-pc-windows-msvc"}]'
+
+  mise-auto-on:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    name: mise-auto-on
+    uses: ./.github/workflows/ci-rust.yml
+    permissions:
+      contents: read
+      actions: write # cancel-run on failure
+    with:
+      working-directory: tests/fixtures/rust-crate
+      mise-auto-install: true
+      matrix: '[{"os": "windows-latest", "target": "x86_64-pc-windows-msvc"}]'
+
   # `skip` over the shared four-target matrix: every target still reports under its name,
   # and all of them run their no-op steps on `skip-runs-on` (ubuntu-latest), so no macOS
   # (xcode-27), Windows or ARM runner is started.
